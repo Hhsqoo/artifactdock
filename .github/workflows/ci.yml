@@ -19,6 +19,8 @@ jobs:
         run: moon test --target native
       - name: Build
         run: moon build --target native
+      - name: Blob range smoke test
+        run: bash examples/range-smoke.sh
       - name: Format
         run: |
           moon fmt

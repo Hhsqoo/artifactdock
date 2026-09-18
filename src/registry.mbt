@@ -110,9 +110,52 @@ async fn send_blob(
     "Content-Type": "application/octet-stream",
     "Content-Length": body.length().to_string(),
     "Docker-Content-Digest": digest,
+    "Accept-Ranges": "bytes",
   })
   ..write(body)
   .end_response()
+}
+
+///|
+enum BlobRange {
+  Full
+  Partial(Int, Int)
+  Unsatisfiable
+}
+
+///|
+/// A registry can ignore unsupported or malformed ranges. A valid range
+/// beyond the end of the blob gets a 416 response instead.
+fn select_blob_range(headers : @http.Headers, size : Int) -> BlobRange {
+  let value = match headers.get("Range") {
+    Some(value) => value
+    None => return Full
+  }
+  guard value.length() >= 6 && value[:6] == "bytes=" else { return Full }
+  let spec : StringView = value[6:]
+  guard spec.find(",") is None else { return Full }
+  let dash = match spec.find("-") {
+    Some(index) => index
+    None => return Full
+  }
+  if dash == 0 {
+    let suffix = @string.parse_int(spec[1:]) catch { _ => return Full }
+    guard suffix > 0 && size > 0 else { return Unsatisfiable }
+    let start = if suffix >= size { 0 } else { size - suffix }
+    return Partial(start, size - 1)
+  }
+  let start = @string.parse_int(spec[:dash]) catch { _ => return Full }
+  guard start >= 0 else { return Full }
+  let end = if dash + 1 == spec.length() {
+    size - 1
+  } else {
+    @string.parse_int(spec[dash + 1:]) catch {
+      _ => return Full
+    }
+  }
+  guard end >= start else { return Full }
+  guard start < size else { return Unsatisfiable }
+  Partial(start, if end >= size { size - 1 } else { end })
 }
 
 ///|
@@ -161,6 +204,7 @@ async fn handle_blob(
   repository : String,
   digest : String,
   request_method : @http.RequestMethod,
+  headers : @http.Headers,
   conn : @http.ServerConnection,
 ) -> Unit {
   guard valid_repository(repository) && valid_digest(digest) else {
@@ -179,10 +223,37 @@ async fn handle_blob(
       conn.send_response(200, "OK", extra_headers={
         "Content-Length": body.length().to_string(),
         "Docker-Content-Digest": digest,
+        "Accept-Ranges": "bytes",
       })
       conn.end_response()
     }
-    Get => send_blob(conn, 200, "OK", body, digest)
+    Get =>
+      match select_blob_range(headers, body.length()) {
+        Full => send_blob(conn, 200, "OK", body, digest)
+        Partial(start, end) =>
+          conn
+          ..send_response(206, "Partial Content", extra_headers={
+            "Content-Type": "application/octet-stream",
+            "Content-Length": (end - start + 1).to_string(),
+            "Content-Range": "bytes " +
+            start.to_string() +
+            "-" +
+            end.to_string() +
+            "/" +
+            body.length().to_string(),
+            "Docker-Content-Digest": digest,
+            "Accept-Ranges": "bytes",
+          })
+          ..write(body[start:end + 1])
+          .end_response()
+        Unsatisfiable => {
+          conn.send_response(416, "Range Not Satisfiable", extra_headers={
+            "Content-Range": "bytes */" + body.length().to_string(),
+            "Accept-Ranges": "bytes",
+          })
+          conn.end_response()
+        }
+      }
     _ => send_error(conn, 405, "UNSUPPORTED")
   }
 }
@@ -494,7 +565,14 @@ pub async fn serve(store : RegistryStore, host : String, port : Int) -> Unit {
           _ => send_error(conn, 405, "UNSUPPORTED")
         }
       Blob(repository, digest) =>
-        handle_blob(store, repository, digest, request.meth, conn)
+        handle_blob(
+          store,
+          repository,
+          digest,
+          request.meth,
+          request.headers,
+          conn,
+        )
       UploadStart(repository) =>
         handle_upload(
           store,

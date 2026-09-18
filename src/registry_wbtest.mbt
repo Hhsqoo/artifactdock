@@ -38,6 +38,20 @@ test "upload ranges" {
 }
 
 ///|
+test "blob byte ranges" {
+  assert_true(select_blob_range({}, 10) is Full)
+  assert_true(select_blob_range({ "Range": "bytes=2-5" }, 10) is Partial(2, 5))
+  assert_true(select_blob_range({ "Range": "bytes=7-" }, 10) is Partial(7, 9))
+  assert_true(select_blob_range({ "Range": "bytes=-3" }, 10) is Partial(7, 9))
+  assert_true(select_blob_range({ "Range": "bytes=8-99" }, 10) is Partial(8, 9))
+  assert_true(select_blob_range({ "Range": "bytes=10-" }, 10) is Unsatisfiable)
+  assert_true(select_blob_range({ "Range": "bytes=-0" }, 10) is Unsatisfiable)
+  assert_true(select_blob_range({ "Range": "items=1-2" }, 10) is Full)
+  assert_true(select_blob_range({ "Range": "bytes=1-2,4-5" }, 10) is Full)
+  assert_true(select_blob_range({ "Range": "bytes=oops" }, 10) is Full)
+}
+
+///|
 test "manifest JSON validation" {
   assert_true(valid_manifest_json(@utf8.encode("{\"schemaVersion\":2}")))
   assert_true(
