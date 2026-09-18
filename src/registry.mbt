@@ -146,13 +146,11 @@ fn select_blob_range(headers : @http.Headers, size : Int) -> BlobRange {
   }
   let start = @string.parse_int(spec[:dash]) catch { _ => return Full }
   guard start >= 0 else { return Full }
-  let end = if dash + 1 == spec.length() {
-    size - 1
-  } else {
-    @string.parse_int(spec[dash + 1:]) catch {
-      _ => return Full
-    }
+  if dash + 1 == spec.length() {
+    guard start < size else { return Unsatisfiable }
+    return Partial(start, size - 1)
   }
+  let end = @string.parse_int(spec[dash + 1:]) catch { _ => return Full }
   guard end >= start else { return Full }
   guard start < size else { return Unsatisfiable }
   Partial(start, if end >= size { size - 1 } else { end })
