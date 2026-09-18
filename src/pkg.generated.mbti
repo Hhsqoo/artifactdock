@@ -1,0 +1,41 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "Hhsqoo/artifactdock"
+
+// Values
+pub async fn serve(RegistryStore, String, Int) -> Unit
+
+pub fn sha256_digest(Bytes) -> String
+
+pub fn valid_digest(String) -> Bool
+
+pub fn valid_manifest_reference(String) -> Bool
+
+pub fn valid_reference(String) -> Bool
+
+pub fn valid_repository(String) -> Bool
+
+// Errors
+
+// Types and methods
+type RegistryRoute
+
+type RegistryStore
+pub async fn RegistryStore::append_upload(Self, String, Bytes) -> Bool
+pub async fn RegistryStore::delete_upload(Self, String) -> Bool
+pub async fn RegistryStore::ensure(Self) -> Unit
+pub async fn RegistryStore::finalize_upload(Self, String, String) -> (Int, String?)
+pub async fn RegistryStore::get_blob(Self, String) -> Bytes?
+pub async fn RegistryStore::get_manifest(Self, String, String) -> Bytes?
+pub async fn RegistryStore::has_blob(Self, String) -> Bool
+pub async fn RegistryStore::list_tags(Self, String) -> Array[String]
+pub async fn RegistryStore::manifest_content_type(Self, String, String) -> String
+pub fn RegistryStore::new(String) -> Self
+pub async fn RegistryStore::put_blob(Self, Bytes) -> String
+pub async fn RegistryStore::put_manifest(Self, String, String, Bytes) -> String
+pub async fn RegistryStore::put_manifest_with_type(Self, String, String, Bytes, String) -> String
+pub async fn RegistryStore::start_upload(Self) -> String
+pub async fn RegistryStore::upload_size(Self, String) -> Int?
+
+// Type aliases
+
+// Traits
