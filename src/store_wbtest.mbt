@@ -8,27 +8,47 @@ async test "filesystem store round trip" {
   let digest = store.put_blob(payload)
   assert_true(store.has_blob(digest))
   assert_true(store.get_blob(digest) is Some(value) && value == payload)
+  assert_false(store.has_repository_blob("demo/wasm", digest))
   assert_true(store.get_manifest("demo/wasm", digest) is None)
 
-  let upload_id = store.start_upload()
+  let upload_id = store.start_upload("demo/wasm")
   let restarted = RegistryStore::new(root)
-  let second_upload_id = restarted.start_upload()
+  let second_upload_id = restarted.start_upload("demo/wasm")
   assert_true(second_upload_id != upload_id)
-  assert_true(store.append_upload(upload_id, b"hello "))
-  assert_true(store.append_upload(upload_id, b"world"))
-  let (status, finalized) = store.finalize_upload(upload_id, digest)
+  assert_true(store.upload_size("other/repo", upload_id) is None)
+  assert_false(store.append_upload("other/repo", upload_id, b"wrong"))
+  assert_false(store.delete_upload("other/repo", upload_id))
+  let (wrong_status, _) = store.finalize_upload("other/repo", upload_id, digest)
+  assert_eq(wrong_status, 404)
+  assert_true(store.append_upload("demo/wasm", upload_id, b"hello "))
+  assert_true(store.append_upload("demo/wasm", upload_id, b"world"))
+  let (status, finalized) = store.finalize_upload(
+    "demo/wasm", upload_id, digest,
+  )
   assert_eq(status, 201)
   assert_true(finalized is Some(value) && value == digest)
+  assert_true(store.has_repository_blob("demo/wasm", digest))
+  assert_false(store.has_repository_blob("other/repo", digest))
+  assert_true(store.get_repository_blob("other/repo", digest) is None)
+  assert_false(store.mount_blob("other/repo", "missing/repo", digest))
+  assert_true(store.mount_blob("other/repo", "demo/wasm", digest))
+  assert_true(
+    store.get_repository_blob("other/repo", digest) is Some(value) &&
+    value == payload,
+  )
 
-  let failed_id = store.start_upload()
-  assert_true(store.append_upload(failed_id, b"not the expected payload"))
+  let failed_id = store.start_upload("demo/wasm")
+  assert_true(
+    store.append_upload("demo/wasm", failed_id, b"not the expected payload"),
+  )
   let (failed_status, actual) = store.finalize_upload(
+    "demo/wasm",
     failed_id,
     "sha256:" + "0".repeat(64),
   )
   assert_eq(failed_status, 400)
   assert_true(actual is Some(_))
-  assert_true(store.delete_upload(failed_id))
+  assert_true(store.delete_upload("demo/wasm", failed_id))
 
   let manifest : Bytes = b"{\"schemaVersion\":2}"
   assert_eq(store.put_manifest("../escape", "v1", manifest), "")

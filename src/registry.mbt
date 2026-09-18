@@ -25,13 +25,54 @@ fn query_value(path : String, key : String) -> String? {
       for field in query.split("&") {
         match field.find("=") {
           Some(equal) if field[:equal] == key =>
-            return Some(field[equal + 1:].to_owned())
+            return decode_query_value(field[equal + 1:].to_owned())
           _ => continue
         }
       }
       None
     }
     None => None
+  }
+}
+
+///|
+fn hex_nibble(value : Byte) -> Int? {
+  if value >= b'0' && value <= b'9' {
+    Some(value.to_int() - b'0'.to_int())
+  } else if value >= b'a' && value <= b'f' {
+    Some(value.to_int() - b'a'.to_int() + 10)
+  } else if value >= b'A' && value <= b'F' {
+    Some(value.to_int() - b'A'.to_int() + 10)
+  } else {
+    None
+  }
+}
+
+///|
+fn decode_query_value(value : String) -> String? {
+  let input = @utf8.encode(value)
+  let output = Buffer()
+  let mut index = 0
+  while index < input.length() {
+    if input[index] == b'%' {
+      guard index + 2 < input.length() else { return None }
+      let high = match hex_nibble(input[index + 1]) {
+        Some(nibble) => nibble
+        None => return None
+      }
+      let low = match hex_nibble(input[index + 2]) {
+        Some(nibble) => nibble
+        None => return None
+      }
+      output.write_byte((high * 16 + low).to_byte())
+      index += 3
+    } else {
+      output.write_byte(if input[index] == b'+' { b' ' } else { input[index] })
+      index += 1
+    }
+  }
+  Some(@utf8.decode(output.contents())) catch {
+    _ => None
   }
 }
 
@@ -214,7 +255,7 @@ async fn handle_blob(
     send_error(conn, 400, "DIGEST_INVALID")
     return
   }
-  let body = match store.get_blob(digest) {
+  let body = match store.get_repository_blob(repository, digest) {
     Some(value) => value
     None => {
       send_error(conn, 404, "BLOB_UNKNOWN")
@@ -501,14 +542,22 @@ async fn handle_upload(
   }
   match (request_method, upload_id) {
     (Post, None) => {
-      let id = store.start_upload()
+      match (query_value(path, "mount"), query_value(path, "from")) {
+        (Some(digest), Some(source)) =>
+          if store.mount_blob(repository, source, digest) {
+            send_upload_created(conn, repository, digest)
+            return
+          }
+        _ => ()
+      }
+      let id = store.start_upload(repository)
       let data = body_reader.read_all().binary()
       if data.length() > 0 {
-        ignore(store.append_upload(id, data))
+        ignore(store.append_upload(repository, id, data))
       }
       match query_digest(path) {
         Some(expected) => {
-          let (status, digest) = store.finalize_upload(id, expected)
+          let (status, digest) = store.finalize_upload(repository, id, expected)
           match (status, digest) {
             (201, Some(value)) => send_upload_created(conn, repository, value)
             (400, _) => send_error(conn, 400, "DIGEST_INVALID")
@@ -526,7 +575,7 @@ async fn handle_upload(
       }
     }
     (Patch, Some(id)) => {
-      let current = match store.upload_size(id) {
+      let current = match store.upload_size(repository, id) {
         Some(value) => value
         None => {
           send_error(conn, 404, "BLOB_UPLOAD_UNKNOWN")
@@ -538,7 +587,7 @@ async fn handle_upload(
         send_error(conn, 416, "RANGE_INVALID")
         return
       }
-      guard store.append_upload(id, data) else {
+      guard store.append_upload(repository, id, data) else {
         send_error(conn, 404, "BLOB_UPLOAD_UNKNOWN")
         return
       }
@@ -550,7 +599,7 @@ async fn handle_upload(
       conn.end_response()
     }
     (Get, Some(id)) => {
-      let current = match store.upload_size(id) {
+      let current = match store.upload_size(repository, id) {
         Some(value) => value
         None => {
           send_error(conn, 404, "BLOB_UPLOAD_UNKNOWN")
@@ -565,7 +614,7 @@ async fn handle_upload(
       conn.end_response()
     }
     (Delete, Some(id)) => {
-      guard store.delete_upload(id) else {
+      guard store.delete_upload(repository, id) else {
         send_error(conn, 404, "BLOB_UPLOAD_UNKNOWN")
         return
       }
@@ -580,7 +629,7 @@ async fn handle_upload(
           return
         }
       }
-      let current = match store.upload_size(id) {
+      let current = match store.upload_size(repository, id) {
         Some(value) => value
         None => {
           send_error(conn, 404, "BLOB_UPLOAD_UNKNOWN")
@@ -593,12 +642,12 @@ async fn handle_upload(
         return
       }
       if data.length() > 0 {
-        guard store.append_upload(id, data) else {
+        guard store.append_upload(repository, id, data) else {
           send_error(conn, 404, "BLOB_UPLOAD_UNKNOWN")
           return
         }
       }
-      let (status, digest) = store.finalize_upload(id, expected)
+      let (status, digest) = store.finalize_upload(repository, id, expected)
       match (status, digest) {
         (201, Some(value)) => send_upload_created(conn, repository, value)
         (400, Some(_)) => send_error(conn, 400, "DIGEST_INVALID")

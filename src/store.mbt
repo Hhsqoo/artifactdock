@@ -30,11 +30,36 @@ fn RegistryStore::blob_path(self : RegistryStore, digest : String) -> String {
 }
 
 ///|
+fn RegistryStore::blob_link_dir(
+  self : RegistryStore,
+  repository : String,
+) -> String {
+  self.repo_dir(repository) + "/blobs"
+}
+
+///|
+fn RegistryStore::blob_link_path(
+  self : RegistryStore,
+  repository : String,
+  digest : String,
+) -> String {
+  self.blob_link_dir(repository) + "/" + digest[7:].to_owned()
+}
+
+///|
 fn RegistryStore::upload_path(
   self : RegistryStore,
   upload_id : String,
 ) -> String {
   self.uploads_dir() + "/" + upload_id
+}
+
+///|
+fn RegistryStore::upload_owner_path(
+  self : RegistryStore,
+  upload_id : String,
+) -> String {
+  self.upload_path(upload_id) + ".repo"
 }
 
 ///|
@@ -160,6 +185,54 @@ pub async fn RegistryStore::has_blob(
 }
 
 ///|
+pub async fn RegistryStore::has_repository_blob(
+  self : RegistryStore,
+  repository : String,
+  digest : String,
+) -> Bool {
+  valid_repository(repository) &&
+  self.has_blob(digest) &&
+  @fs.exists(self.blob_link_path(repository, digest))
+}
+
+///|
+pub async fn RegistryStore::get_repository_blob(
+  self : RegistryStore,
+  repository : String,
+  digest : String,
+) -> Bytes? {
+  guard self.has_repository_blob(repository, digest) else { return None }
+  self.get_blob(digest)
+}
+
+///|
+async fn RegistryStore::link_blob(
+  self : RegistryStore,
+  repository : String,
+  digest : String,
+) -> Unit {
+  let path = self.blob_link_path(repository, digest)
+  ensure_dir(self.blob_link_dir(repository))
+  if !@fs.exists(path) {
+    write_bytes(path, b"")
+  }
+}
+
+///|
+pub async fn RegistryStore::mount_blob(
+  self : RegistryStore,
+  repository : String,
+  source : String,
+  digest : String,
+) -> Bool {
+  guard valid_repository(repository) && self.has_repository_blob(source, digest) else {
+    return false
+  }
+  self.link_blob(repository, digest)
+  true
+}
+
+///|
 pub async fn RegistryStore::put_manifest(
   self : RegistryStore,
   repository : String,
@@ -265,26 +338,52 @@ pub async fn RegistryStore::list_tags(
 }
 
 ///|
-pub async fn RegistryStore::start_upload(self : RegistryStore) -> String {
+pub async fn RegistryStore::start_upload(
+  self : RegistryStore,
+  repository : String,
+) -> String {
+  guard valid_repository(repository) else { return "" }
   ensure_dir(self.uploads_dir())
   let mut sequence = self.next_upload + 1
   let mut upload_id = "u" + sequence.to_string()
-  while @fs.exists(self.upload_path(upload_id)) {
+  while @fs.exists(self.upload_path(upload_id)) ||
+        @fs.exists(self.upload_owner_path(upload_id)) {
     sequence += 1
     upload_id = "u" + sequence.to_string()
   }
   self.next_upload = sequence
+  write_bytes(self.upload_owner_path(upload_id), @utf8.encode(repository))
   write_bytes(self.upload_path(upload_id), b"")
   upload_id
 }
 
 ///|
+async fn RegistryStore::owns_upload(
+  self : RegistryStore,
+  repository : String,
+  upload_id : String,
+) -> Bool {
+  guard valid_repository(repository) && valid_reference(upload_id) else {
+    return false
+  }
+  let owner = read_bytes(self.upload_owner_path(upload_id)) catch { _ => None }
+  match owner {
+    Some(bytes) => {
+      let decoded = @utf8.decode(bytes) catch { _ => "" }
+      decoded == repository
+    }
+    None => false
+  }
+}
+
+///|
 pub async fn RegistryStore::append_upload(
   self : RegistryStore,
+  repository : String,
   upload_id : String,
   data : Bytes,
 ) -> Bool {
-  guard valid_reference(upload_id) else { return false }
+  guard self.owns_upload(repository, upload_id) else { return false }
   let path = self.upload_path(upload_id)
   guard @fs.exists(path) else { return false }
   append_bytes(path, data)
@@ -295,9 +394,10 @@ pub async fn RegistryStore::append_upload(
 /// Return the current byte length of an upload session.
 pub async fn RegistryStore::upload_size(
   self : RegistryStore,
+  repository : String,
   upload_id : String,
 ) -> Int? {
-  guard valid_reference(upload_id) else { return None }
+  guard self.owns_upload(repository, upload_id) else { return None }
   let path = self.upload_path(upload_id)
   guard @fs.exists(path) else { return None }
   Some(@fs.file_size(path).to_int())
@@ -307,24 +407,26 @@ pub async fn RegistryStore::upload_size(
 /// Remove an in-progress upload session.
 pub async fn RegistryStore::delete_upload(
   self : RegistryStore,
+  repository : String,
   upload_id : String,
 ) -> Bool {
-  guard valid_reference(upload_id) else { return false }
+  guard self.owns_upload(repository, upload_id) else { return false }
   let path = self.upload_path(upload_id)
   guard @fs.exists(path) else { return false }
   @fs.remove(path)
+  @fs.remove(self.upload_owner_path(upload_id))
   true
 }
 
 ///|
 pub async fn RegistryStore::finalize_upload(
   self : RegistryStore,
+  repository : String,
   upload_id : String,
   expected_digest : String,
 ) -> (Int, String?) {
-  guard valid_reference(upload_id) && valid_digest(expected_digest) else {
-    return (400, None)
-  }
+  guard valid_digest(expected_digest) else { return (400, None) }
+  guard self.owns_upload(repository, upload_id) else { return (404, None) }
   let path = self.upload_path(upload_id)
   let data = match read_bytes(path) {
     Some(value) => value
@@ -333,6 +435,8 @@ pub async fn RegistryStore::finalize_upload(
   let actual = sha256_digest(data)
   guard actual == expected_digest else { return (400, Some(actual)) }
   let digest = self.put_blob(data)
+  self.link_blob(repository, digest)
   @fs.remove(path)
+  @fs.remove(self.upload_owner_path(upload_id))
   (201, Some(digest))
 }

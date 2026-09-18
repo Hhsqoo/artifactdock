@@ -23,6 +23,25 @@ upload_status=$(printf 'hello range' | curl -sS -o /dev/null -w '%{http_code}' \
   --data-binary @-)
 test "$upload_status" = 201
 
+foreign_status=$(curl -sS -o /dev/null -w '%{http_code}' \
+  "$base/v2/other/repo/blobs/$digest")
+test "$foreign_status" = 404
+mount_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+  "$base/v2/other/repo/blobs/uploads/?mount=${digest/://%3A}&from=demo%2Frange")
+test "$mount_status" = 201
+test "$(curl -sS "$base/v2/other/repo/blobs/$digest")" = 'hello range'
+
+upload_start=$(curl -sS -o /dev/null -D "$root.headers" \
+  -w '%{http_code}' -X POST "$base/v2/demo/range/blobs/uploads/")
+test "$upload_start" = 202
+upload_id=$(grep -i '^docker-upload-uuid:' "$root.headers" | cut -d: -f2 | tr -d '\r ')
+wrong_patch=$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH \
+  --data-binary 'wrong' "$base/v2/other/repo/blobs/uploads/$upload_id")
+test "$wrong_patch" = 404
+delete_status=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+  "$base/v2/demo/range/blobs/uploads/$upload_id")
+test "$delete_status" = 204
+
 partial_status=$(curl -sS -o "$root.body" -D "$root.headers" \
   -w '%{http_code}' -H 'Range: bytes=6-10' \
   "$base/v2/demo/range/blobs/$digest")

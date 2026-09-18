@@ -26,6 +26,11 @@ test "OCI routes" {
     query_digest("/upload?trace=1&digest=sha256:abc&mode=close")
     is Some("sha256:abc"),
   )
+  assert_true(query_digest("/upload?digest=sha256%3Aabc") is Some("sha256:abc"))
+  assert_true(
+    query_value("/upload?from=demo%2Fwasm", "from") is Some("demo/wasm"),
+  )
+  assert_true(query_value("/upload?from=%ZZ", "from") is None)
 }
 
 ///|

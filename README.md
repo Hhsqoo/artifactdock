@@ -10,7 +10,9 @@ The first release targets a reliable single-node registry suitable for local dev
 
 - OCI `/v2/` discovery
 - Content-addressed SHA-256 blob storage
+- Repository-scoped blob visibility with cross-repository mounts
 - Monolithic and chunked blob uploads (`POST`, `PATCH`, `PUT`)
+- Upload sessions bound to their repository
 - Blob `HEAD`/`GET`
 - Blob byte-range `GET` for resuming interrupted downloads (`206`/`416`)
 - Manifest `PUT`, `HEAD`, `GET` by tag or digest, with UTF-8 JSON/schema validation
@@ -19,6 +21,8 @@ The first release targets a reliable single-node registry suitable for local dev
 - Restart-safe filesystem persistence and atomic writes
 
 Authentication, garbage collection, remote object storage, replication, and referrers are deliberately follow-up work. The server does not build images or execute containers.
+
+Blob data created before repository-scoped links were introduced must be re-pushed to its repository before the blob endpoint can serve it. In-progress uploads from that earlier storage format cannot be resumed. Repository scoping follows OCI API semantics; it is not user authentication.
 
 ## Run
 
