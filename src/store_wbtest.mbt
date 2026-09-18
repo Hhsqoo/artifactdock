@@ -35,6 +35,7 @@ async test "filesystem store round trip" {
   assert_true(store.get_manifest("../escape", "v1") is None)
   assert_true(store.list_tags("../escape") is [])
   let manifest_digest = store.put_manifest("demo/wasm", "v1", manifest)
+  ignore(store.put_manifest("demo/wasm", "a0", manifest))
   assert_true(
     store.get_manifest("demo/wasm", "v1") is Some(value) && value == manifest,
   )
@@ -42,7 +43,7 @@ async test "filesystem store round trip" {
     store.get_manifest("demo/wasm", manifest_digest) is Some(value) &&
     value == manifest,
   )
-  assert_true(store.list_tags("demo/wasm") is ["v1"])
+  assert_true(store.list_tags("demo/wasm") is ["a0", "v1"])
   ignore(
     store.put_manifest_with_type(
       "demo/wasm", "artifact", manifest, "application/vnd.oci.artifact.manifest.v1+json",

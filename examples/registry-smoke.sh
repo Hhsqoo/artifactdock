@@ -36,3 +36,19 @@ invalid_status=$(curl -sS -o /dev/null -D "$root.headers" \
   "$base/v2/demo/range/blobs/$digest")
 test "$invalid_status" = 416
 grep -iq '^content-range: bytes \*/11' "$root.headers"
+
+for tag in c a b; do
+  status=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+    -H 'Content-Type: application/vnd.oci.image.manifest.v1+json' \
+    --data-binary '{"schemaVersion":2}' \
+    "$base/v2/demo/range/manifests/$tag")
+  test "$status" = 201
+done
+
+first_page=$(curl -sS -D "$root.headers" \
+  "$base/v2/demo/range/tags/list?n=2")
+test "$first_page" = '{"name":"demo/range","tags":["a","b"]}'
+grep -Fq '</v2/demo/range/tags/list?n=2&last=b>; rel="next"' "$root.headers"
+
+second_page=$(curl -sS "$base/v2/demo/range/tags/list?n=2&last=b")
+test "$second_page" = '{"name":"demo/range","tags":["c"]}'

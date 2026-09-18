@@ -18,13 +18,13 @@ fn without_query(path : String) -> String {
 }
 
 ///|
-fn query_digest(path : String) -> String? {
+fn query_value(path : String, key : String) -> String? {
   match path.find("?") {
     Some(index) => {
       let query : StringView = path[index + 1:]
       for field in query.split("&") {
         match field.find("=") {
-          Some(equal) if field[:equal] == "digest" =>
+          Some(equal) if field[:equal] == key =>
             return Some(field[equal + 1:].to_owned())
           _ => continue
         }
@@ -33,6 +33,11 @@ fn query_digest(path : String) -> String? {
     }
     None => None
   }
+}
+
+///|
+fn query_digest(path : String) -> String? {
+  query_value(path, "digest")
 }
 
 ///|
@@ -338,6 +343,7 @@ async fn handle_tags(
   store : RegistryStore,
   repository : String,
   request_method : @http.RequestMethod,
+  path : String,
   conn : @http.ServerConnection,
 ) -> Unit {
   guard valid_repository(repository) else {
@@ -348,7 +354,23 @@ async fn handle_tags(
     send_error(conn, 405, "UNSUPPORTED")
     return
   }
-  let tags = store.list_tags(repository)
+  let limit = match query_value(path, "n") {
+    Some(value) => {
+      let parsed = @string.parse_int(value) catch { _ => -1 }
+      guard parsed >= 0 else {
+        send_error(conn, 400, "UNSUPPORTED")
+        return
+      }
+      Some(parsed)
+    }
+    None => None
+  }
+  let last = query_value(path, "last")
+  if last is Some(value) && !valid_reference(value) {
+    send_error(conn, 400, "UNSUPPORTED")
+    return
+  }
+  let (tags, next) = tags_page(store.list_tags(repository), limit, last)
   let mut body = "{\"name\":\"" + repository + "\",\"tags\":["
   for i, tag in tags {
     if i > 0 {
@@ -357,12 +379,50 @@ async fn handle_tags(
     body += "\"" + tag + "\""
   }
   body += "]}"
+  let response_headers : @http.Headers = { "Content-Type": "application/json" }
+  match next {
+    Some(tag) => {
+      let n = match limit {
+        Some(value) => value
+        None => 0
+      }
+      response_headers["Link"] = "</v2/" +
+        repository +
+        "/tags/list?n=" +
+        n.to_string() +
+        "&last=" +
+        tag +
+        ">; rel=\"next\""
+    }
+    None => ()
+  }
   conn
-  ..send_response(200, "OK", extra_headers={
-    "Content-Type": "application/json",
-  })
+  ..send_response(200, "OK", extra_headers=response_headers)
   ..write(@utf8.encode(body))
   .end_response()
+}
+
+///|
+/// The input comes from the store in ASCIIbetical order.
+fn tags_page(
+  tags : Array[String],
+  limit : Int?,
+  last : String?,
+) -> (Array[String], String?) {
+  let page : Array[String] = []
+  if limit is Some(0) {
+    return (page, None)
+  }
+  for tag in tags {
+    if last is Some(cursor) && tag <= cursor {
+      continue
+    }
+    if limit is Some(n) && page.length() >= n {
+      return (page, Some(page[page.length() - 1]))
+    }
+    page.push(tag)
+  }
+  (page, None)
 }
 
 ///|
@@ -603,7 +663,8 @@ pub async fn serve(store : RegistryStore, host : String, port : Int) -> Unit {
           request.headers,
           body,
         )
-      Tags(repository) => handle_tags(store, repository, request.meth, conn)
+      Tags(repository) =>
+        handle_tags(store, repository, request.meth, request.path, conn)
       Unknown => send_error(conn, 404, "NAME_UNKNOWN")
     }
   })

@@ -52,6 +52,22 @@ test "blob byte ranges" {
 }
 
 ///|
+test "tag pagination" {
+  let tags = ["a", "b", "c"]
+  let (first, first_next) = tags_page(tags, Some(2), None)
+  assert_true(first is ["a", "b"])
+  assert_true(first_next is Some("b"))
+  let (second, second_next) = tags_page(tags, Some(2), Some("b"))
+  assert_true(second is ["c"])
+  assert_true(second_next is None)
+  let (empty, empty_next) = tags_page(tags, Some(0), None)
+  assert_true(empty is [])
+  assert_true(empty_next is None)
+  let (rest, _) = tags_page(tags, None, Some("a"))
+  assert_true(rest is ["b", "c"])
+}
+
+///|
 test "manifest JSON validation" {
   assert_true(valid_manifest_json(@utf8.encode("{\"schemaVersion\":2}")))
   assert_true(

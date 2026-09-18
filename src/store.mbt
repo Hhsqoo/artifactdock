@@ -261,7 +261,7 @@ pub async fn RegistryStore::list_tags(
   guard valid_repository(repository) else { return [] }
   let path = self.manifest_tag_dir(repository)
   guard @fs.exists(path) else { return [] }
-  @fs.readdir(path, include_hidden=false)
+  @fs.readdir(path, include_hidden=false, sort=true)
 }
 
 ///|
