@@ -115,10 +115,19 @@ async fn atomic_write(path : String, data : Bytes, suffix : String) -> Unit {
 
 ///|
 pub async fn RegistryStore::ensure(self : RegistryStore) -> Unit {
-  @fs.mkdir(self.root, recursive=true)
-  @fs.mkdir(self.blobs_dir(), recursive=true)
-  @fs.mkdir(self.uploads_dir(), recursive=true)
-  @fs.mkdir(self.root + "/repos", recursive=true)
+  ensure_dir(self.root)
+  ensure_dir(self.blobs_dir())
+  ensure_dir(self.uploads_dir())
+  ensure_dir(self.root + "/repos")
+}
+
+///|
+async fn ensure_dir(path : String) -> Unit {
+  if !@fs.exists(path) {
+    @fs.mkdir(path, recursive=true) catch {
+      err => if !@fs.exists(path) { raise err }
+    }
+  }
 }
 
 ///|
@@ -176,9 +185,9 @@ pub async fn RegistryStore::put_manifest_with_type(
   }
   let digest = self.put_blob(data)
   let tag_dir = self.manifest_tag_dir(repository)
-  @fs.mkdir(tag_dir, recursive=true)
+  ensure_dir(tag_dir)
   let type_dir = self.manifest_type_dir(repository)
-  @fs.mkdir(type_dir, recursive=true)
+  ensure_dir(type_dir)
   atomic_write(
     self.manifest_type_path(repository, digest),
     @utf8.encode(content_type),
@@ -257,7 +266,7 @@ pub async fn RegistryStore::list_tags(
 
 ///|
 pub async fn RegistryStore::start_upload(self : RegistryStore) -> String {
-  @fs.mkdir(self.uploads_dir(), recursive=true)
+  ensure_dir(self.uploads_dir())
   let mut sequence = self.next_upload + 1
   let mut upload_id = "u" + sequence.to_string()
   while @fs.exists(self.upload_path(upload_id)) {

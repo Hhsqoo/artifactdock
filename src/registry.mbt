@@ -43,7 +43,8 @@ fn route_for(path : String) -> RegistryRoute {
   }
   guard clean.length() >= 4 && clean[:4] == "/v2/" else { return Unknown }
   let rest : StringView = clean[4:]
-  if rest.rev_find("/blobs/uploads/") is Some(index) {
+  if rest.rev_find("/blobs/uploads/") is Some(index) &&
+    rest[index + 15:].find("/") is None {
     let repository = rest[:index].to_owned()
     let upload_id = rest[index + 15:].to_owned()
     if upload_id == "" {
@@ -51,9 +52,11 @@ fn route_for(path : String) -> RegistryRoute {
     } else {
       UploadChunk(repository, upload_id)
     }
-  } else if rest.rev_find("/blobs/") is Some(index) {
+  } else if rest.rev_find("/blobs/") is Some(index) &&
+    rest[index + 7:].find("/") is None {
     Blob(rest[:index].to_owned(), rest[index + 7:].to_owned())
-  } else if rest.rev_find("/manifests/") is Some(index) {
+  } else if rest.rev_find("/manifests/") is Some(index) &&
+    rest[index + 11:].find("/") is None {
     Manifest(rest[:index].to_owned(), rest[index + 11:].to_owned())
   } else if rest.rev_find("/tags/list") is Some(index) &&
     index + 10 == rest.length() {
