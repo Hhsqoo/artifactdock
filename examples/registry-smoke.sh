@@ -27,7 +27,7 @@ foreign_status=$(curl -sS -o /dev/null -w '%{http_code}' \
   "$base/v2/other/repo/blobs/$digest")
 test "$foreign_status" = 404
 mount_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
-  "$base/v2/other/repo/blobs/uploads/?mount=${digest/://%3A}&from=demo%2Frange")
+  "$base/v2/other/repo/blobs/uploads/?mount=${digest/:/%3A}&from=demo%2Frange")
 test "$mount_status" = 201
 test "$(curl -sS "$base/v2/other/repo/blobs/$digest")" = 'hello range'
 
