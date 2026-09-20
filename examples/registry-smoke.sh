@@ -3,9 +3,9 @@ set -euo pipefail
 
 base='http://127.0.0.1:5051'
 root="${RUNNER_TEMP:-/tmp}/artifactdock-range-${RANDOM}"
-moon run src -- --root "$root" --host 127.0.0.1 --port 5051 &
+setsid moon run src -- --root "$root" --host 127.0.0.1 --port 5051 &
 server_pid=$!
-trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+trap 'kill -KILL -- "-$server_pid" 2>/dev/null || true' EXIT
 
 ready=0
 for _ in {1..50}; do
@@ -107,7 +107,7 @@ manifest_hex=${manifest_digest#sha256:}
 blob_hex=${digest#sha256:}
 test -f "$root/blobs/$manifest_hex"
 test -f "$root/blobs/$blob_hex"
-kill "$server_pid"
+kill -KILL -- "-$server_pid"
 wait "$server_pid" 2>/dev/null || true
 trap - EXIT
 moon run src -- --root "$root" --gc --dry-run
