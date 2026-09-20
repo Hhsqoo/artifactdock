@@ -56,6 +56,15 @@ invalid_status=$(curl -sS -o /dev/null -D "$root.headers" \
 test "$invalid_status" = 416
 grep -iq '^content-range: bytes \*/11' "$root.headers"
 
+delete_blob=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+  "$base/v2/demo/range/blobs/$digest")
+test "$delete_blob" = 202
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  "$base/v2/demo/range/blobs/$digest")" = 404
+test "$(curl -sS "$base/v2/other/repo/blobs/$digest")" = 'hello range'
+test "$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+  "$base/v2/demo/range/blobs/$digest")" = 404
+
 for tag in c a b; do
   status=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
     -H 'Content-Type: application/vnd.oci.image.manifest.v1+json' \

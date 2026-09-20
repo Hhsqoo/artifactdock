@@ -36,6 +36,11 @@ async test "filesystem store round trip" {
     store.get_repository_blob("other/repo", digest) is Some(value) &&
     value == payload,
   )
+  assert_true(store.delete_repository_blob("demo/wasm", digest))
+  assert_false(store.has_repository_blob("demo/wasm", digest))
+  assert_true(store.has_repository_blob("other/repo", digest))
+  assert_true(store.get_blob(digest) is Some(value) && value == payload)
+  assert_false(store.delete_repository_blob("demo/wasm", digest))
 
   let failed_id = store.start_upload("demo/wasm")
   assert_true(

@@ -255,6 +255,14 @@ async fn handle_blob(
     send_error(conn, 400, "DIGEST_INVALID")
     return
   }
+  if request_method is Delete {
+    guard store.delete_repository_blob(repository, digest) else {
+      send_error(conn, 404, "BLOB_UNKNOWN")
+      return
+    }
+    send_empty(conn, 202, "Accepted")
+    return
+  }
   let body = match store.get_repository_blob(repository, digest) {
     Some(value) => value
     None => {

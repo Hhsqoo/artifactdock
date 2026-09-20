@@ -206,6 +206,22 @@ pub async fn RegistryStore::get_repository_blob(
 }
 
 ///|
+/// Remove a repository's blob link while retaining shared content for GC.
+pub async fn RegistryStore::delete_repository_blob(
+  self : RegistryStore,
+  repository : String,
+  digest : String,
+) -> Bool {
+  guard valid_repository(repository) && valid_digest(digest) else {
+    return false
+  }
+  let path = self.blob_link_path(repository, digest)
+  guard @fs.exists(path) else { return false }
+  @fs.remove(path)
+  true
+}
+
+///|
 async fn RegistryStore::link_blob(
   self : RegistryStore,
   repository : String,

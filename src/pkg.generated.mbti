@@ -24,6 +24,7 @@ type RegistryRoute
 type RegistryStore
 pub async fn RegistryStore::append_upload(Self, String, String, Bytes) -> Bool
 pub async fn RegistryStore::delete_manifest(Self, String, String) -> Bool
+pub async fn RegistryStore::delete_repository_blob(Self, String, String) -> Bool
 pub async fn RegistryStore::delete_upload(Self, String, String) -> Bool
 pub async fn RegistryStore::ensure(Self) -> Unit
 pub async fn RegistryStore::finalize_upload(Self, String, String, String) -> (Int, String?)
