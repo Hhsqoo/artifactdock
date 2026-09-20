@@ -71,3 +71,25 @@ grep -Fq '</v2/demo/range/tags/list?n=2&last=b>; rel="next"' "$root.headers"
 
 second_page=$(curl -sS "$base/v2/demo/range/tags/list?n=2&last=b")
 test "$second_page" = '{"name":"demo/range","tags":["c"]}'
+
+delete_tag=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+  "$base/v2/demo/range/manifests/a")
+test "$delete_tag" = 202
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  "$base/v2/demo/range/manifests/a")" = 404
+
+curl -sS -o /dev/null -D "$root.headers" -I \
+  "$base/v2/demo/range/manifests/b"
+manifest_digest=$(grep -i '^docker-content-digest:' "$root.headers" | \
+  cut -d: -f2- | tr -d '\r ')
+delete_manifest=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+  "$base/v2/demo/range/manifests/$manifest_digest")
+test "$delete_manifest" = 202
+for reference in b c "$manifest_digest"; do
+  test "$(curl -sS -o /dev/null -w '%{http_code}' \
+    "$base/v2/demo/range/manifests/$reference")" = 404
+done
+test "$(curl -sS "$base/v2/demo/range/tags/list")" = \
+  '{"name":"demo/range","tags":[]}'
+test "$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+  "$base/v2/demo/range/manifests/$manifest_digest")" = 404

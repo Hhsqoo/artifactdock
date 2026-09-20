@@ -73,6 +73,21 @@ async test "filesystem store round trip" {
     store.manifest_content_type("demo/wasm", manifest_digest),
     "application/vnd.oci.artifact.manifest.v1+json",
   )
+  assert_eq(
+    store.put_manifest("other/repo", "shared", manifest),
+    manifest_digest,
+  )
+  assert_true(store.delete_manifest("demo/wasm", "a0"))
+  assert_true(store.get_manifest("demo/wasm", "a0") is None)
+  assert_true(store.get_manifest("demo/wasm", "v1") is Some(_))
+  assert_true(store.list_tags("demo/wasm") is ["artifact", "v1"])
+  assert_true(store.delete_manifest("demo/wasm", manifest_digest))
+  assert_true(store.get_manifest("demo/wasm", manifest_digest) is None)
+  assert_true(store.get_manifest("demo/wasm", "v1") is None)
+  assert_true(store.list_tags("demo/wasm") is [])
+  assert_true(store.get_blob(manifest_digest) is Some(_))
+  assert_true(store.get_manifest("other/repo", "shared") is Some(_))
+  assert_false(store.delete_manifest("demo/wasm", manifest_digest))
 
   @fs.rmdir(root, recursive=true)
 }

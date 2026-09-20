@@ -348,6 +348,14 @@ async fn handle_manifest(
     conn.end_response()
     return
   }
+  if request_method is Delete {
+    guard store.delete_manifest(repository, reference) else {
+      send_error(conn, 404, "MANIFEST_UNKNOWN")
+      return
+    }
+    send_empty(conn, 202, "Accepted")
+    return
+  }
   let value = match store.get_manifest(repository, reference) {
     Some(value) => value
     None => {

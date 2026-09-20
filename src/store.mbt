@@ -327,6 +327,46 @@ pub async fn RegistryStore::get_manifest(
 }
 
 ///|
+/// Delete a tag, or remove a manifest and every tag that points to it.
+/// The content-addressed blob remains available for other repositories and GC.
+pub async fn RegistryStore::delete_manifest(
+  self : RegistryStore,
+  repository : String,
+  reference : String,
+) -> Bool {
+  guard valid_repository(repository) && valid_manifest_reference(reference) else {
+    return false
+  }
+  if !valid_digest(reference) {
+    let path = self.tag_path(repository, reference)
+    guard @fs.exists(path) else { return false }
+    @fs.remove(path)
+    return true
+  }
+  let type_path = self.manifest_type_path(repository, reference)
+  guard @fs.exists(type_path) else { return false }
+  let tag_dir = self.manifest_tag_dir(repository)
+  if @fs.exists(tag_dir) {
+    for tag in @fs.readdir(tag_dir, include_hidden=false, sort=false) {
+      let target = read_bytes(self.tag_path(repository, tag)) catch {
+        _ => None
+      }
+      match target {
+        Some(value) => {
+          let digest = @utf8.decode(value) catch { _ => "" }
+          if digest == reference {
+            @fs.remove(self.tag_path(repository, tag))
+          }
+        }
+        None => ()
+      }
+    }
+  }
+  @fs.remove(type_path)
+  true
+}
+
+///|
 pub async fn RegistryStore::list_tags(
   self : RegistryStore,
   repository : String,
