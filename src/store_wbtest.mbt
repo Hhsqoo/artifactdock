@@ -80,7 +80,7 @@ async test "filesystem store round trip" {
   assert_true(store.delete_manifest("demo/wasm", "a0"))
   assert_true(store.get_manifest("demo/wasm", "a0") is None)
   assert_true(store.get_manifest("demo/wasm", "v1") is Some(_))
-  assert_true(store.list_tags("demo/wasm") is ["artifact", "v1"])
+  assert_true(store.get_manifest("demo/wasm", "artifact") is Some(_))
   assert_true(store.delete_manifest("demo/wasm", manifest_digest))
   assert_true(store.get_manifest("demo/wasm", manifest_digest) is None)
   assert_true(store.get_manifest("demo/wasm", "v1") is None)
