@@ -94,5 +94,20 @@ async test "filesystem store round trip" {
   assert_true(store.get_manifest("other/repo", "shared") is Some(_))
   assert_false(store.delete_manifest("demo/wasm", manifest_digest))
 
+  let orphan : Bytes = b"orphan"
+  let orphan_digest = store.put_blob(orphan)
+  let (dry_scanned, dry_reclaimable, dry_bytes) = store.collect_garbage(true)
+  assert_eq(dry_scanned, 3)
+  assert_eq(dry_reclaimable, 1)
+  assert_eq(dry_bytes, orphan.length().to_int64())
+  assert_true(store.get_blob(orphan_digest) is Some(_))
+  let (scanned, reclaimable, reclaimed_bytes) = store.collect_garbage(false)
+  assert_eq(scanned, 3)
+  assert_eq(reclaimable, 1)
+  assert_eq(reclaimed_bytes, orphan.length().to_int64())
+  assert_true(store.get_blob(orphan_digest) is None)
+  assert_true(store.get_blob(digest) is Some(_))
+  assert_true(store.get_blob(manifest_digest) is Some(_))
+
   @fs.rmdir(root, recursive=true)
 }

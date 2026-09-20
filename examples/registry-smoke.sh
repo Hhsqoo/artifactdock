@@ -102,3 +102,16 @@ test "$(curl -sS "$base/v2/demo/range/tags/list")" = \
   '{"name":"demo/range","tags":[]}'
 test "$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
   "$base/v2/demo/range/manifests/$manifest_digest")" = 404
+
+manifest_hex=${manifest_digest#sha256:}
+blob_hex=${digest#sha256:}
+test -f "$root/blobs/$manifest_hex"
+test -f "$root/blobs/$blob_hex"
+kill "$server_pid"
+wait "$server_pid" 2>/dev/null || true
+trap - EXIT
+moon run src -- --root "$root" --gc --dry-run
+test -f "$root/blobs/$manifest_hex"
+moon run src -- --root "$root" --gc
+test ! -e "$root/blobs/$manifest_hex"
+test -f "$root/blobs/$blob_hex"

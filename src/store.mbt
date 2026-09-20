@@ -383,6 +383,51 @@ pub async fn RegistryStore::delete_manifest(
 }
 
 ///|
+/// Remove global content that has no repository blob or manifest reference.
+/// Returns the number of content files scanned, reclaimable files, and bytes.
+pub async fn RegistryStore::collect_garbage(
+  self : RegistryStore,
+  dry_run : Bool,
+) -> (Int, Int, Int64) {
+  let referenced : Map[String, Bool] = Map([])
+  let repos = self.root + "/repos"
+  if @fs.exists(repos) {
+    @fs.walk(
+      repos,
+      fn(path, entries) {
+        if path.has_suffix("/blobs") || path.has_suffix("/manifest-types") {
+          for name in entries {
+            if valid_digest("sha256:" + name) {
+              referenced[name] = true
+            }
+          }
+        }
+      },
+      max_concurrency=1,
+    )
+  }
+  let blobs = self.blobs_dir()
+  guard @fs.exists(blobs) else { return (0, 0, 0L) }
+  let mut scanned = 0
+  let mut reclaimable = 0
+  let mut bytes = 0L
+  for name in @fs.readdir(blobs, include_hidden=false, sort=true) {
+    guard valid_digest("sha256:" + name) else { continue }
+    let path = blobs + "/" + name
+    guard @fs.kind(path, follow_symlink=false) is Regular else { continue }
+    scanned += 1
+    if !referenced.contains(name) {
+      bytes += @fs.file_size(path)
+      reclaimable += 1
+      if !dry_run {
+        @fs.remove(path)
+      }
+    }
+  }
+  (scanned, reclaimable, bytes)
+}
+
+///|
 pub async fn RegistryStore::list_tags(
   self : RegistryStore,
   repository : String,
