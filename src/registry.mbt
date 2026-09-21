@@ -269,6 +269,55 @@ fn manifest_reference_matches(reference : String, digest : String) -> Bool {
 }
 
 ///|
+fn trim_http_ows(value : StringView) -> String {
+  let mut start = 0
+  let mut end = value.length()
+  while start < end &&
+        (value[start].to_int() == 32 || value[start].to_int() == 9) {
+    start += 1
+  }
+  while end > start &&
+        (value[end - 1].to_int() == 32 || value[end - 1].to_int() == 9) {
+    end -= 1
+  }
+  value[start:end].to_owned()
+}
+
+///|
+fn request_manifest_content_type(headers : @http.Headers) -> String {
+  let default_type = "application/vnd.oci.image.manifest.v1+json"
+  let raw = match headers.get("Content-Type") {
+    Some(value) => value
+    None => return default_type
+  }
+  guard raw.find("\r") is None && raw.find("\n") is None else {
+    return default_type
+  }
+  let base : StringView = match raw.find(";") {
+    Some(index) => raw[:index]
+    None => raw[:]
+  }
+  let normalized = trim_http_ows(base)
+  if normalized == "" {
+    default_type
+  } else {
+    normalized
+  }
+}
+
+///|
+fn tag_header_value(tags : Array[String]) -> String {
+  let mut value = ""
+  for index, tag in tags {
+    if index > 0 {
+      value += ", "
+    }
+    value += tag
+  }
+  value
+}
+
+///|
 fn manifest_subject(body : Bytes) -> String? {
   let text = @utf8.decode(body) catch { _ => return None }
   let value = @json.parse(text) catch { _ => return None }
@@ -434,17 +483,7 @@ async fn handle_manifest(
       send_error(conn, 400, "DIGEST_INVALID")
       return
     }
-    let content_type = match headers.get("Content-Type") {
-      Some(value) =>
-        if value.length() > 0 &&
-          value.find("\r") is None &&
-          value.find("\n") is None {
-          value
-        } else {
-          "application/vnd.oci.image.manifest.v1+json"
-        }
-      None => "application/vnd.oci.image.manifest.v1+json"
-    }
+    let content_type = request_manifest_content_type(headers)
     let digest = store.put_manifest_with_type(
       repository, reference, body, content_type,
     )
@@ -454,6 +493,9 @@ async fn handle_manifest(
     let response_headers : @http.Headers = {
       "Location": "/v2/" + repository + "/manifests/" + digest,
       "Docker-Content-Digest": digest,
+    }
+    if requested_tags.length() > 0 {
+      response_headers["OCI-Tag"] = tag_header_value(requested_tags)
     }
     if manifest_subject(body) is Some(subject) {
       response_headers["OCI-Subject"] = subject

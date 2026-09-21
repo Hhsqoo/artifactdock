@@ -85,11 +85,20 @@ curl -sS -o /dev/null -D "$root.headers" -I \
   "$base/v2/demo/range/manifests/b"
 manifest_digest=$(grep -i '^docker-content-digest:' "$root.headers" | \
   cut -d: -f2- | tr -d '\r ')
-multi_tag_status=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
-  -H 'Content-Type: application/vnd.oci.image.manifest.v1+json' \
+multi_tag_status=$(curl -sS -o /dev/null -D "$root.headers" \
+  -w '%{http_code}' -X PUT \
+  -H 'Content-Type: application/vnd.oci.image.manifest.v1+json; charset=utf-8' \
   --data-binary '{"schemaVersion":2}' \
   "$base/v2/demo/range/manifests/$manifest_digest?tag=multi-one&tag=multi%2Dtwo")
 test "$multi_tag_status" = 201
+grep -Fiq 'oci-tag: multi-one, multi-two' "$root.headers"
+curl -sS -o /dev/null -D "$root.headers" -I \
+  "$base/v2/demo/range/manifests/multi-one"
+grep -Fiq 'content-type: application/vnd.oci.image.manifest.v1+json' \
+  "$root.headers"
+if grep -Fiq 'charset=' "$root.headers"; then
+  exit 1
+fi
 test "$(curl -sS "$base/v2/demo/range/manifests/multi-one")" = \
   '{"schemaVersion":2}'
 test "$(curl -sS "$base/v2/demo/range/manifests/multi-two")" = \

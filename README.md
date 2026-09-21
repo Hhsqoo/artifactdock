@@ -17,7 +17,7 @@ The first release targets a reliable single-node registry suitable for local dev
 - Blob byte-range `GET` for resuming interrupted downloads (`206`/`416`)
 - Blob deletion with repository-safe shared content retention
 - Manifest `PUT`, `HEAD`, `GET` by tag or digest, with UTF-8 JSON/schema validation
-- Digest-addressed manifest pushes with validated repeated `tag` parameters
+- Digest-addressed manifest pushes with validated repeated `tag` parameters and `OCI-Tag` responses
 - Manifest and tag deletion with repository-safe shared blob retention
 - Manifest media-type preservation for Wasm and other OCI artifacts
 - ASCII sorted tag listing with OCI `n`/`last` pagination and next-page links

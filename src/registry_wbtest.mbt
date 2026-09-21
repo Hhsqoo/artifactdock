@@ -108,6 +108,21 @@ test "manifest digest references" {
 }
 
 ///|
+test "manifest response metadata" {
+  assert_eq(
+    request_manifest_content_type({
+      "Content-Type": " application/vnd.example.manifest+json ; charset=utf-8",
+    }),
+    "application/vnd.example.manifest+json",
+  )
+  assert_eq(
+    request_manifest_content_type({}),
+    "application/vnd.oci.image.manifest.v1+json",
+  )
+  assert_eq(tag_header_value(["1.2.3", "1.2", "latest"]), "1.2.3, 1.2, latest")
+}
+
+///|
 test "referrer descriptors" {
   let subject = "sha256:" + "1".repeat(64)
   let digest = "sha256:" + "2".repeat(64)
