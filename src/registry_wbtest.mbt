@@ -1,6 +1,8 @@
 ///|
 test "OCI routes" {
   assert_true(route_for("/v2/") is Root)
+  assert_true(route_for("/v2/_catalog") is Catalog)
+  assert_true(route_for("/v2/_catalog?n=10") is Catalog)
   assert_true(
     route_for("/v2/demo/wasm/blobs/sha256:abc")
     is Blob("demo/wasm", "sha256:abc"),
@@ -70,17 +72,22 @@ test "blob byte ranges" {
 ///|
 test "tag pagination" {
   let tags = ["a", "b", "c"]
-  let (first, first_next) = tags_page(tags, Some(2), None)
+  let (first, first_next) = list_page(tags, Some(2), None)
   assert_true(first is ["a", "b"])
   assert_true(first_next is Some("b"))
-  let (second, second_next) = tags_page(tags, Some(2), Some("b"))
+  let (second, second_next) = list_page(tags, Some(2), Some("b"))
   assert_true(second is ["c"])
   assert_true(second_next is None)
-  let (empty, empty_next) = tags_page(tags, Some(0), None)
+  let (empty, empty_next) = list_page(tags, Some(0), None)
   assert_true(empty is [])
   assert_true(empty_next is None)
-  let (rest, _) = tags_page(tags, None, Some("a"))
+  let (rest, _) = list_page(tags, None, Some("a"))
   assert_true(rest is ["b", "c"])
+  let unsorted = ["plain", "z", "alpha"]
+  sort_ascii(unsorted)
+  assert_true(unsorted is ["alpha", "plain", "z"])
+  let (after_z, _) = list_page(unsorted, None, Some("z"))
+  assert_true(after_z is [])
 }
 
 ///|

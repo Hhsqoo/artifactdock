@@ -1,6 +1,7 @@
 ///|
 enum RegistryRoute {
   Root
+  Catalog
   Blob(String, String)
   UploadStart(String)
   UploadChunk(String, String)
@@ -109,6 +110,9 @@ fn route_for(path : String) -> RegistryRoute {
   let clean = without_query(path)
   if clean == "/v2/" || clean == "/v2" {
     return Root
+  }
+  if clean == "/v2/_catalog" {
+    return Catalog
   }
   guard clean.length() >= 4 && clean[:4] == "/v2/" else { return Unknown }
   let rest : StringView = clean[4:]
@@ -629,7 +633,7 @@ async fn handle_tags(
     send_error(conn, 400, "UNSUPPORTED")
     return
   }
-  let (tags, next) = tags_page(store.list_tags(repository), limit, last)
+  let (tags, next) = list_page(store.list_tags(repository), limit, last)
   let mut body = "{\"name\":\"" + repository + "\",\"tags\":["
   for i, tag in tags {
     if i > 0 {
@@ -662,26 +666,60 @@ async fn handle_tags(
 }
 
 ///|
-/// The input comes from the store in ASCIIbetical order.
-fn tags_page(
-  tags : Array[String],
-  limit : Int?,
-  last : String?,
-) -> (Array[String], String?) {
-  let page : Array[String] = []
-  if limit is Some(0) {
-    return (page, None)
+async fn handle_catalog(
+  store : RegistryStore,
+  request_method : @http.RequestMethod,
+  path : String,
+  conn : @http.ServerConnection,
+) -> Unit {
+  guard request_method is Get else {
+    send_error(conn, 405, "UNSUPPORTED")
+    return
   }
-  for tag in tags {
-    if last is Some(cursor) && tag <= cursor {
-      continue
+  let limit = match query_value(path, "n") {
+    Some(value) => {
+      let parsed = @string.parse_int(value) catch { _ => -1 }
+      guard parsed >= 0 else {
+        send_error(conn, 400, "UNSUPPORTED")
+        return
+      }
+      Some(parsed)
     }
-    if limit is Some(n) && page.length() >= n {
-      return (page, Some(page[page.length() - 1]))
-    }
-    page.push(tag)
+    None => None
   }
-  (page, None)
+  let last = query_value(path, "last")
+  if last is Some(value) && !valid_repository(value) {
+    send_error(conn, 400, "UNSUPPORTED")
+    return
+  }
+  let (repositories, next) = list_page(store.list_repositories(), limit, last)
+  let mut body = "{\"repositories\":["
+  for index, repository in repositories {
+    if index > 0 {
+      body += ","
+    }
+    body += "\"" + repository + "\""
+  }
+  body += "]}"
+  let response_headers : @http.Headers = { "Content-Type": "application/json" }
+  match next {
+    Some(repository) => {
+      let n = match limit {
+        Some(value) => value
+        None => 0
+      }
+      response_headers["Link"] = "</v2/_catalog?n=" +
+        n.to_string() +
+        "&last=" +
+        repository +
+        ">; rel=\"next\""
+    }
+    None => ()
+  }
+  conn
+  ..send_response(200, "OK", extra_headers=response_headers)
+  ..write(@utf8.encode(body))
+  .end_response()
 }
 
 ///|
@@ -889,6 +927,7 @@ pub async fn serve(store : RegistryStore, host : String, port : Int) -> Unit {
           Get | Head => send_empty(conn, 200, "OK")
           _ => send_error(conn, 405, "UNSUPPORTED")
         }
+      Catalog => handle_catalog(store, request.meth, request.path, conn)
       Blob(repository, digest) =>
         handle_blob(
           store,

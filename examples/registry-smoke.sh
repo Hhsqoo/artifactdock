@@ -31,6 +31,12 @@ mount_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
 test "$mount_status" = 201
 test "$(curl -sS "$base/v2/other/repo/blobs/$digest")" = 'hello range'
 
+catalog_first=$(curl -sS -D "$root.headers" "$base/v2/_catalog?n=1")
+test "$catalog_first" = '{"repositories":["demo/range"]}'
+grep -Fq '</v2/_catalog?n=1&last=demo/range>; rel="next"' "$root.headers"
+test "$(curl -sS "$base/v2/_catalog?n=1&last=demo%2Frange")" = \
+  '{"repositories":["other/repo"]}'
+
 upload_start=$(curl -sS -o /dev/null -D "$root.headers" \
   -w '%{http_code}' -X POST "$base/v2/demo/range/blobs/uploads/")
 test "$upload_start" = 202

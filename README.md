@@ -21,6 +21,7 @@ The first release targets a reliable single-node registry suitable for local dev
 - Manifest and tag deletion with repository-safe shared blob retention
 - Manifest media-type preservation for Wasm and other OCI artifacts
 - ASCII sorted tag listing with OCI `n`/`last` pagination and next-page links
+- Docker-compatible repository catalog (`/v2/_catalog`) with `n`/`last` pagination
 - OCI 1.1 referrers discovery with `artifactType` filtering
 - Restart-safe filesystem persistence and atomic writes
 - Offline garbage collection with a non-destructive dry-run mode

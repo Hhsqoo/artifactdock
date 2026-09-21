@@ -88,6 +88,7 @@ async test "filesystem store round trip" {
     store.put_manifest("other/repo", "shared", manifest),
     manifest_digest,
   )
+  assert_true(store.list_repositories() is ["demo/wasm", "other/repo"])
   assert_true(store.delete_manifest("demo/wasm", "a0"))
   assert_true(store.get_manifest("demo/wasm", "a0") is None)
   assert_true(store.get_manifest("demo/wasm", "v1") is Some(_))

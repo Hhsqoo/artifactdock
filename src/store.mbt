@@ -455,7 +455,37 @@ pub async fn RegistryStore::list_tags(
   guard valid_repository(repository) else { return [] }
   let path = self.manifest_tag_dir(repository)
   guard @fs.exists(path) else { return [] }
-  @fs.readdir(path, include_hidden=false, sort=true)
+  let tags = @fs.readdir(path, include_hidden=false, sort=false)
+  sort_ascii(tags)
+  tags
+}
+
+///|
+/// Return repositories that have persisted blobs, tags, or manifests.
+pub async fn RegistryStore::list_repositories(
+  self : RegistryStore,
+) -> Array[String] {
+  let root = self.root + "/repos"
+  guard @fs.exists(root) else { return [] }
+  let repositories : Array[String] = []
+  @fs.walk(
+    root,
+    async fn(path, _entries) {
+      guard path != root else { return }
+      let repository = path[root.length() + 1:].to_owned()
+      if valid_repository(repository) &&
+        (
+          @fs.exists(path + "/blobs") ||
+          @fs.exists(path + "/tags") ||
+          @fs.exists(path + "/manifest-types")
+        ) {
+        repositories.push(repository)
+      }
+    },
+    max_concurrency=1,
+  )
+  sort_ascii(repositories)
+  repositories
 }
 
 ///|
