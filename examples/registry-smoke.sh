@@ -85,6 +85,22 @@ curl -sS -o /dev/null -D "$root.headers" -I \
   "$base/v2/demo/range/manifests/b"
 manifest_digest=$(grep -i '^docker-content-digest:' "$root.headers" | \
   cut -d: -f2- | tr -d '\r ')
+multi_tag_status=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+  -H 'Content-Type: application/vnd.oci.image.manifest.v1+json' \
+  --data-binary '{"schemaVersion":2}' \
+  "$base/v2/demo/range/manifests/$manifest_digest?tag=multi-one&tag=multi%2Dtwo")
+test "$multi_tag_status" = 201
+test "$(curl -sS "$base/v2/demo/range/manifests/multi-one")" = \
+  '{"schemaVersion":2}'
+test "$(curl -sS "$base/v2/demo/range/manifests/multi-two")" = \
+  '{"schemaVersion":2}'
+invalid_tags_status=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+  -H 'Content-Type: application/vnd.oci.image.manifest.v1+json' \
+  --data-binary '{"schemaVersion":2}' \
+  "$base/v2/demo/range/manifests/$manifest_digest?tag=should-not-exist&tag=bad%2Ftag")
+test "$invalid_tags_status" = 400
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  "$base/v2/demo/range/manifests/should-not-exist")" = 404
 sbom_manifest=$(printf \
   '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","artifactType":"application/vnd.example.sbom.v1","subject":{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"%s","size":19},"annotations":{"org.example.kind":"sbom"}}' \
   "$manifest_digest")
@@ -129,7 +145,7 @@ test "$(curl -sS -o /dev/null -w '%{http_code}' \
 delete_manifest=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
   "$base/v2/demo/range/manifests/$manifest_digest")
 test "$delete_manifest" = 202
-for reference in b c "$manifest_digest"; do
+for reference in b c multi-one multi-two "$manifest_digest"; do
   test "$(curl -sS -o /dev/null -w '%{http_code}' \
     "$base/v2/demo/range/manifests/$reference")" = 404
 done

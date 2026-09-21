@@ -292,6 +292,26 @@ pub async fn RegistryStore::put_manifest_with_type(
 }
 
 ///|
+/// Add a tag to a manifest already stored in the repository.
+pub async fn RegistryStore::tag_manifest(
+  self : RegistryStore,
+  repository : String,
+  tag : String,
+  digest : String,
+) -> Bool {
+  guard valid_repository(repository) &&
+    valid_reference(tag) &&
+    valid_digest(digest) &&
+    @fs.exists(self.manifest_type_path(repository, digest)) &&
+    self.has_blob(digest) else {
+    return false
+  }
+  ensure_dir(self.manifest_tag_dir(repository))
+  atomic_write(self.tag_path(repository, tag), @utf8.encode(digest), "tag")
+  true
+}
+
+///|
 /// Return a persisted manifest media type, or the OCI image default.
 pub async fn RegistryStore::manifest_content_type(
   self : RegistryStore,

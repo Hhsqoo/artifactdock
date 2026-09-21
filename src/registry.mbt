@@ -37,6 +37,28 @@ fn query_value(path : String, key : String) -> String? {
 }
 
 ///|
+fn query_values(path : String, key : String) -> Array[String]? {
+  let values : Array[String] = []
+  match path.find("?") {
+    Some(index) => {
+      let query : StringView = path[index + 1:]
+      for field in query.split("&") {
+        match field.find("=") {
+          Some(equal) if field[:equal] == key =>
+            match decode_query_value(field[equal + 1:].to_owned()) {
+              Some(value) => values.push(value)
+              None => return None
+            }
+          _ => continue
+        }
+      }
+      Some(values)
+    }
+    None => Some(values)
+  }
+}
+
+///|
 fn hex_nibble(value : Byte) -> Int? {
   if value >= b'0' && value <= b'9' {
     Some(value.to_int() - b'0'.to_int())
@@ -375,6 +397,7 @@ async fn handle_manifest(
   repository : String,
   reference : String,
   request_method : @http.RequestMethod,
+  path : String,
   conn : @http.ServerConnection,
   headers : @http.Headers,
   body_reader : &@io.Reader,
@@ -384,6 +407,23 @@ async fn handle_manifest(
     return
   }
   if request_method is Put {
+    let requested_tags : Array[String] = if valid_digest(reference) {
+      match query_values(path, "tag") {
+        Some(values) => values
+        None => {
+          send_error(conn, 400, "TAG_INVALID")
+          return
+        }
+      }
+    } else {
+      []
+    }
+    for tag in requested_tags {
+      guard valid_reference(tag) else {
+        send_error(conn, 400, "TAG_INVALID")
+        return
+      }
+    }
     let body = body_reader.read_all().binary()
     guard valid_manifest_json(body) else {
       send_error(conn, 400, "MANIFEST_INVALID")
@@ -408,6 +448,9 @@ async fn handle_manifest(
     let digest = store.put_manifest_with_type(
       repository, reference, body, content_type,
     )
+    for tag in requested_tags {
+      ignore(store.tag_manifest(repository, tag, digest))
+    }
     let response_headers : @http.Headers = {
       "Location": "/v2/" + repository + "/manifests/" + digest,
       "Docker-Content-Digest": digest,
@@ -841,6 +884,7 @@ pub async fn serve(store : RegistryStore, host : String, port : Int) -> Unit {
           repository,
           reference,
           request.meth,
+          request.path,
           conn,
           request.headers,
           body,

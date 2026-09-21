@@ -35,6 +35,13 @@ test "OCI routes" {
     query_value("/upload?from=demo%2Fwasm", "from") is Some("demo/wasm"),
   )
   assert_true(query_value("/upload?from=%ZZ", "from") is None)
+  assert_true(
+    query_values("/manifest?tag=v1&tag=latest", "tag") is Some(["v1", "latest"]),
+  )
+  assert_true(
+    query_values("/manifest?tag=release%2Done", "tag") is Some(["release-one"]),
+  )
+  assert_true(query_values("/manifest?tag=valid&tag=%ZZ", "tag") is None)
 }
 
 ///|

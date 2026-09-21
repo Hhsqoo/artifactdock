@@ -78,6 +78,12 @@ async test "filesystem store round trip" {
     store.manifest_content_type("demo/wasm", manifest_digest),
     "application/vnd.oci.artifact.manifest.v1+json",
   )
+  assert_true(store.tag_manifest("demo/wasm", "extra", manifest_digest))
+  assert_true(
+    store.get_manifest("demo/wasm", "extra") is Some(value) && value == manifest,
+  )
+  assert_false(store.tag_manifest("demo/wasm", "bad/tag", manifest_digest))
+  assert_false(store.tag_manifest("missing/repo", "extra", manifest_digest))
   assert_eq(
     store.put_manifest("other/repo", "shared", manifest),
     manifest_digest,
