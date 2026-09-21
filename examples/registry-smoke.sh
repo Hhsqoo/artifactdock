@@ -134,7 +134,7 @@ for reference in b c "$manifest_digest"; do
     "$base/v2/demo/range/manifests/$reference")" = 404
 done
 test "$(curl -sS "$base/v2/demo/range/tags/list")" = \
-  '{"name":"demo/range","tags":[]}'
+  '{"name":"demo/range","tags":["sbom","signature"]}'
 test "$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
   "$base/v2/demo/range/manifests/$manifest_digest")" = 404
 
