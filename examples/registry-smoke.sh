@@ -81,16 +81,51 @@ grep -Fq '</v2/demo/range/tags/list?n=2&last=b>; rel="next"' "$root.headers"
 second_page=$(curl -sS "$base/v2/demo/range/tags/list?n=2&last=b")
 test "$second_page" = '{"name":"demo/range","tags":["c"]}'
 
+curl -sS -o /dev/null -D "$root.headers" -I \
+  "$base/v2/demo/range/manifests/b"
+manifest_digest=$(grep -i '^docker-content-digest:' "$root.headers" | \
+  cut -d: -f2- | tr -d '\r ')
+sbom_manifest=$(printf \
+  '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","artifactType":"application/vnd.example.sbom.v1","subject":{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"%s","size":19},"annotations":{"org.example.kind":"sbom"}}' \
+  "$manifest_digest")
+sbom_status=$(printf '%s' "$sbom_manifest" | curl -sS -o /dev/null \
+  -D "$root.headers" -w '%{http_code}' -X PUT \
+  -H 'Content-Type: application/vnd.oci.image.manifest.v1+json' \
+  --data-binary @- "$base/v2/demo/range/manifests/sbom")
+test "$sbom_status" = 201
+grep -Fiq "oci-subject: $manifest_digest" "$root.headers"
+signature_manifest=$(printf \
+  '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","artifactType":"application/vnd.example.signature.v1","subject":{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"%s","size":19}}' \
+  "$manifest_digest")
+test "$(printf '%s' "$signature_manifest" | curl -sS -o /dev/null \
+  -w '%{http_code}' -X PUT \
+  -H 'Content-Type: application/vnd.oci.image.manifest.v1+json' \
+  --data-binary @- "$base/v2/demo/range/manifests/signature")" = 201
+
+referrers=$(curl -sS -D "$root.headers" \
+  "$base/v2/demo/range/referrers/$manifest_digest")
+grep -Fiq 'content-type: application/vnd.oci.image.index.v1+json' "$root.headers"
+printf '%s' "$referrers" | jq -e \
+  '.schemaVersion == 2 and (.manifests | length == 2) and ([.manifests[].artifactType] | sort == ["application/vnd.example.sbom.v1","application/vnd.example.signature.v1"])' \
+  >/dev/null
+filtered=$(curl -sS -D "$root.headers" \
+  "$base/v2/demo/range/referrers/$manifest_digest?artifactType=application%2Fvnd.example.sbom.v1")
+grep -Fiq 'oci-filters-applied: artifactType' "$root.headers"
+printf '%s' "$filtered" | jq -e \
+  '(.manifests | length == 1) and .manifests[0].artifactType == "application/vnd.example.sbom.v1" and .manifests[0].annotations["org.example.kind"] == "sbom"' \
+  >/dev/null
+empty_referrers=$(curl -sS \
+  "$base/v2/demo/range/referrers/sha256:0000000000000000000000000000000000000000000000000000000000000000")
+printf '%s' "$empty_referrers" | jq -e '.manifests == []' >/dev/null
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  "$base/v2/demo/range/referrers/sha256:abc")" = 400
+
 delete_tag=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
   "$base/v2/demo/range/manifests/a")
 test "$delete_tag" = 202
 test "$(curl -sS -o /dev/null -w '%{http_code}' \
   "$base/v2/demo/range/manifests/a")" = 404
 
-curl -sS -o /dev/null -D "$root.headers" -I \
-  "$base/v2/demo/range/manifests/b"
-manifest_digest=$(grep -i '^docker-content-digest:' "$root.headers" | \
-  cut -d: -f2- | tr -d '\r ')
 delete_manifest=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
   "$base/v2/demo/range/manifests/$manifest_digest")
 test "$delete_manifest" = 202

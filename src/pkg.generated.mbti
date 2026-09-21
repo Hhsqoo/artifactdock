@@ -34,6 +34,7 @@ pub async fn RegistryStore::get_manifest(Self, String, String) -> Bytes?
 pub async fn RegistryStore::get_repository_blob(Self, String, String) -> Bytes?
 pub async fn RegistryStore::has_blob(Self, String) -> Bool
 pub async fn RegistryStore::has_repository_blob(Self, String, String) -> Bool
+pub async fn RegistryStore::list_manifest_digests(Self, String) -> Array[String]
 pub async fn RegistryStore::list_tags(Self, String) -> Array[String]
 pub async fn RegistryStore::manifest_content_type(Self, String, String) -> String
 pub async fn RegistryStore::mount_blob(Self, String, String, String) -> Bool

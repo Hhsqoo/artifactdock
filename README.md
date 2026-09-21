@@ -20,10 +20,11 @@ The first release targets a reliable single-node registry suitable for local dev
 - Manifest and tag deletion with repository-safe shared blob retention
 - Manifest media-type preservation for Wasm and other OCI artifacts
 - ASCII sorted tag listing with OCI `n`/`last` pagination and next-page links
+- OCI 1.1 referrers discovery with `artifactType` filtering
 - Restart-safe filesystem persistence and atomic writes
 - Offline garbage collection with a non-destructive dry-run mode
 
-Authentication, remote object storage, replication, and referrers are deliberately follow-up work. The server does not build images or execute containers.
+Authentication, remote object storage, and replication are deliberately follow-up work. The server does not build images or execute containers.
 
 Blob data created before repository-scoped links were introduced must be re-pushed to its repository before the blob endpoint can serve it. In-progress uploads from that earlier storage format cannot be resumed. Repository scoping follows OCI API semantics; it is not user authentication.
 

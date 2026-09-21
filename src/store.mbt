@@ -439,6 +439,25 @@ pub async fn RegistryStore::list_tags(
 }
 
 ///|
+/// Return every manifest digest currently addressable in a repository.
+pub async fn RegistryStore::list_manifest_digests(
+  self : RegistryStore,
+  repository : String,
+) -> Array[String] {
+  guard valid_repository(repository) else { return [] }
+  let path = self.manifest_type_dir(repository)
+  guard @fs.exists(path) else { return [] }
+  let digests : Array[String] = []
+  for name in @fs.readdir(path, include_hidden=false, sort=true) {
+    let digest = "sha256:" + name
+    if valid_digest(digest) && self.has_blob(digest) {
+      digests.push(digest)
+    }
+  }
+  digests
+}
+
+///|
 pub async fn RegistryStore::start_upload(
   self : RegistryStore,
   repository : String,

@@ -20,6 +20,10 @@ test "OCI routes" {
     is Manifest("team/blobs/image", "v1"),
   )
   assert_true(route_for("/v2/demo/wasm/tags/list") is Tags("demo/wasm"))
+  assert_true(
+    route_for("/v2/demo/wasm/referrers/sha256:abc")
+    is Referrers("demo/wasm", "sha256:abc"),
+  )
   assert_true(route_for("/health") is Unknown)
   assert_true(query_digest("/upload?digest=sha256:abc") is Some("sha256:abc"))
   assert_true(
@@ -94,4 +98,34 @@ test "manifest digest references" {
   assert_true(manifest_reference_matches("v1", digest))
   assert_true(manifest_reference_matches(digest, digest))
   assert_false(manifest_reference_matches("sha256:" + "0".repeat(64), digest))
+}
+
+///|
+test "referrer descriptors" {
+  let subject = "sha256:" + "1".repeat(64)
+  let digest = "sha256:" + "2".repeat(64)
+  let body = @utf8.encode(
+    "{\"schemaVersion\":2,\"artifactType\":\"application/example\",\"subject\":{\"digest\":\"" +
+    subject +
+    "\"},\"annotations\":{\"example\":\"value\"}}",
+  )
+  assert_true(manifest_subject(body) is Some(value) && value == subject)
+  assert_true(
+    referrer_descriptor(
+      body, digest, "application/vnd.oci.image.manifest.v1+json",
+    )
+    is Some((target, Some(kind), Object(descriptor))) &&
+    target == subject &&
+    kind == "application/example" &&
+    descriptor.get("annotations") is Some(Object(_)),
+  )
+  let fallback = @utf8.encode(
+    "{\"schemaVersion\":2,\"config\":{\"mediaType\":\"application/config\"},\"subject\":{\"digest\":\"" +
+    subject +
+    "\"}}",
+  )
+  assert_true(
+    referrer_descriptor(fallback, digest, "application/manifest")
+    is Some((_, Some("application/config"), _)),
+  )
 }

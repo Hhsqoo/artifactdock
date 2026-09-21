@@ -92,6 +92,7 @@ async test "filesystem store round trip" {
   assert_true(store.list_tags("demo/wasm") is [])
   assert_true(store.get_blob(manifest_digest) is Some(_))
   assert_true(store.get_manifest("other/repo", "shared") is Some(_))
+  assert_true(store.list_manifest_digests("other/repo") == [manifest_digest])
   assert_false(store.delete_manifest("demo/wasm", manifest_digest))
 
   let orphan : Bytes = b"orphan"

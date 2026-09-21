@@ -5,6 +5,7 @@ enum RegistryRoute {
   UploadStart(String)
   UploadChunk(String, String)
   Manifest(String, String)
+  Referrers(String, String)
   Tags(String)
   Unknown
 }
@@ -104,6 +105,9 @@ fn route_for(path : String) -> RegistryRoute {
   } else if rest.rev_find("/manifests/") is Some(index) &&
     rest[index + 11:].find("/") is None {
     Manifest(rest[:index].to_owned(), rest[index + 11:].to_owned())
+  } else if rest.rev_find("/referrers/") is Some(index) &&
+    rest[index + 11:].find("/") is None {
+    Referrers(rest[:index].to_owned(), rest[index + 11:].to_owned())
   } else if rest.rev_find("/tags/list") is Some(index) &&
     index + 10 == rest.length() {
     Tags(rest[:index].to_owned())
@@ -243,6 +247,61 @@ fn manifest_reference_matches(reference : String, digest : String) -> Bool {
 }
 
 ///|
+fn manifest_subject(body : Bytes) -> String? {
+  let text = @utf8.decode(body) catch { _ => return None }
+  let value = @json.parse(text) catch { _ => return None }
+  guard value is Object(object) else { return None }
+  guard object.get("subject") is Some(Object(subject)) else { return None }
+  match subject.get("digest") {
+    Some(String(digest)) if valid_digest(digest) => Some(digest)
+    _ => None
+  }
+}
+
+///|
+fn referrer_descriptor(
+  body : Bytes,
+  digest : String,
+  media_type : String,
+) -> (String, String?, Json)? {
+  let text = @utf8.decode(body) catch { _ => return None }
+  let value = @json.parse(text) catch { _ => return None }
+  guard value is Object(object) else { return None }
+  let subject = match object.get("subject") {
+    Some(Object(subject)) =>
+      match subject.get("digest") {
+        Some(String(value)) if valid_digest(value) => value
+        _ => return None
+      }
+    _ => return None
+  }
+  let artifact_type = match object.get("artifactType") {
+    Some(String(value)) if value != "" => Some(value)
+    _ =>
+      match object.get("config") {
+        Some(Object(config)) =>
+          match config.get("mediaType") {
+            Some(String(value)) if value != "" => Some(value)
+            _ => None
+          }
+        _ => None
+      }
+  }
+  let descriptor : Map[String, Json] = {
+    "mediaType": @json.to_json(media_type),
+    "digest": @json.to_json(digest),
+    "size": @json.to_json(body.length()),
+  }
+  if artifact_type is Some(value) {
+    descriptor["artifactType"] = @json.to_json(value)
+  }
+  if object.get("annotations") is Some(Object(_) as annotations) {
+    descriptor["annotations"] = annotations
+  }
+  Some((subject, artifact_type, Json::object(descriptor)))
+}
+
+///|
 async fn handle_blob(
   store : RegistryStore,
   repository : String,
@@ -349,10 +408,14 @@ async fn handle_manifest(
     let digest = store.put_manifest_with_type(
       repository, reference, body, content_type,
     )
-    conn.send_response(201, "Created", extra_headers={
+    let response_headers : @http.Headers = {
       "Location": "/v2/" + repository + "/manifests/" + digest,
       "Docker-Content-Digest": digest,
-    })
+    }
+    if manifest_subject(body) is Some(subject) {
+      response_headers["OCI-Subject"] = subject
+    }
+    conn.send_response(201, "Created", extra_headers=response_headers)
     conn.end_response()
     return
   }
@@ -393,6 +456,60 @@ async fn handle_manifest(
       )
     _ => send_error(conn, 405, "UNSUPPORTED")
   }
+}
+
+///|
+async fn handle_referrers(
+  store : RegistryStore,
+  repository : String,
+  subject : String,
+  request_method : @http.RequestMethod,
+  path : String,
+  conn : @http.ServerConnection,
+) -> Unit {
+  guard valid_repository(repository) else {
+    send_error(conn, 400, "NAME_INVALID")
+    return
+  }
+  guard valid_digest(subject) else {
+    send_error(conn, 400, "DIGEST_INVALID")
+    return
+  }
+  guard request_method is Get else {
+    send_error(conn, 405, "UNSUPPORTED")
+    return
+  }
+  let filter = query_value(path, "artifactType")
+  let descriptors : Array[Json] = []
+  for digest in store.list_manifest_digests(repository) {
+    let body = match store.get_manifest(repository, digest) {
+      Some(value) => value
+      None => continue
+    }
+    let media_type = store.manifest_content_type(repository, digest)
+    match referrer_descriptor(body, digest, media_type) {
+      Some((target, artifact_type, descriptor)) if target == subject =>
+        if filter is None || filter == artifact_type {
+          descriptors.push(descriptor)
+        }
+      _ => ()
+    }
+  }
+  let response = Json::object({
+    "schemaVersion": @json.to_json(2),
+    "mediaType": @json.to_json("application/vnd.oci.image.index.v1+json"),
+    "manifests": Json::array(descriptors),
+  }).stringify()
+  let response_headers : @http.Headers = {
+    "Content-Type": "application/vnd.oci.image.index.v1+json",
+  }
+  if filter is Some(_) {
+    response_headers["OCI-Filters-Applied"] = "artifactType"
+  }
+  conn
+  ..send_response(200, "OK", extra_headers=response_headers)
+  ..write(@utf8.encode(response))
+  .end_response()
 }
 
 ///|
@@ -727,6 +844,15 @@ pub async fn serve(store : RegistryStore, host : String, port : Int) -> Unit {
           conn,
           request.headers,
           body,
+        )
+      Referrers(repository, digest) =>
+        handle_referrers(
+          store,
+          repository,
+          digest,
+          request.meth,
+          request.path,
+          conn,
         )
       Tags(repository) =>
         handle_tags(store, repository, request.meth, request.path, conn)
