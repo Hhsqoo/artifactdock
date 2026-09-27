@@ -101,6 +101,42 @@ fn decode_query_value(value : String) -> String? {
 }
 
 ///|
+fn uppercase_hex_digit(value : Int) -> Byte {
+  if value < 10 {
+    (b'0'.to_int() + value).to_byte()
+  } else {
+    (b'A'.to_int() + value - 10).to_byte()
+  }
+}
+
+///|
+/// Encode one UTF-8 query value so pagination links remain valid for media
+/// types containing reserved characters such as `+`, `&`, or `=`.
+fn encode_query_value(value : String) -> String {
+  let input = @utf8.encode(value)
+  let output = Buffer()
+  for byte in input {
+    if (byte >= b'a' && byte <= b'z') ||
+      (byte >= b'A' && byte <= b'Z') ||
+      (byte >= b'0' && byte <= b'9') ||
+      byte == b'-' ||
+      byte == b'_' ||
+      byte == b'.' ||
+      byte == b'~' {
+      output.write_byte(byte)
+    } else {
+      let number = byte.to_int()
+      output.write_byte(b'%')
+      output.write_byte(uppercase_hex_digit(number / 16))
+      output.write_byte(uppercase_hex_digit(number % 16))
+    }
+  }
+  @utf8.decode(output.contents()) catch {
+    _ => ""
+  }
+}
+
+///|
 fn query_digest(path : String) -> String? {
   query_value(path, "digest")
 }
@@ -258,13 +294,202 @@ fn valid_manifest_json(body : Bytes) -> Bool {
   let text = @utf8.decode(body) catch { _ => return false }
   let value = @json.parse(text) catch { _ => return false }
   match value {
-    Object(object) =>
-      match object.get("schemaVersion") {
+    Object(object) => {
+      let has_schema_v2 = match object.get("schemaVersion") {
         Some(Number(version, ..)) => version == 2.0
         _ => false
       }
+      has_schema_v2 && valid_manifest_fields(object)
+    }
     _ => false
   }
+}
+
+///|
+fn valid_media_type_token(value : StringView) -> Bool {
+  guard value.length() > 0 else { return false }
+  for index in 0..<value.length() {
+    let c = char_at(value, index)
+    if !(is_lower_alpha(c) ||
+      is_upper_alpha(c) ||
+      is_digit(c) ||
+      c == '!' ||
+      c == '#' ||
+      c == '$' ||
+      c == '%' ||
+      c == '&' ||
+      c == '\'' ||
+      c == '*' ||
+      c == '+' ||
+      c == '-' ||
+      c == '.' ||
+      c == '^' ||
+      c == '_' ||
+      c == '`' ||
+      c == '|' ||
+      c == '~') {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn valid_media_type(value : String) -> Bool {
+  guard value.find("\r") is None && value.find("\n") is None else {
+    return false
+  }
+  let slash = match value.find("/") {
+    Some(index) => index
+    None => return false
+  }
+  guard value[slash + 1:].find("/") is None else { return false }
+  valid_media_type_token(value[:slash]) &&
+  valid_media_type_token(value[slash + 1:])
+}
+
+///|
+fn valid_descriptor(value : Json) -> Bool {
+  guard value is Object(object) else { return false }
+  let valid_type = match object.get("mediaType") {
+    Some(String(value)) => valid_media_type(value)
+    _ => false
+  }
+  let valid_digest_value = match object.get("digest") {
+    Some(String(value)) => valid_digest(value)
+    _ => false
+  }
+  let valid_size = match object.get("size") {
+    Some(Number(value, ..)) => value >= 0.0 && value.floor() == value
+    _ => false
+  }
+  valid_type && valid_digest_value && valid_size
+}
+
+///|
+fn valid_optional_descriptor(object : Map[String, Json], key : String) -> Bool {
+  match object.get(key) {
+    Some(value) => valid_descriptor(value)
+    None => true
+  }
+}
+
+///|
+fn valid_optional_descriptor_list(
+  object : Map[String, Json],
+  key : String,
+) -> Bool {
+  match object.get(key) {
+    Some(Array(values)) => {
+      for value in values {
+        if !valid_descriptor(value) {
+          return false
+        }
+      }
+      true
+    }
+    None => true
+    _ => false
+  }
+}
+
+///|
+fn valid_manifest_fields(object : Map[String, Json]) -> Bool {
+  match object.get("mediaType") {
+    Some(String(value)) if valid_media_type(value) => ()
+    None => ()
+    _ => return false
+  }
+  match object.get("artifactType") {
+    Some(String(value)) if valid_media_type(value) => ()
+    None => ()
+    _ => return false
+  }
+  valid_optional_descriptor(object, "config") &&
+  valid_optional_descriptor(object, "subject") &&
+  valid_optional_descriptor_list(object, "layers") &&
+  valid_optional_descriptor_list(object, "blobs") &&
+  valid_optional_descriptor_list(object, "manifests")
+}
+
+///|
+fn descriptor_digest(value : Json) -> String? {
+  guard value is Object(object) else { return None }
+  match object.get("digest") {
+    Some(String(digest)) if valid_digest(digest) => Some(digest)
+    _ => None
+  }
+}
+
+///|
+fn append_descriptor_digests(value : Json, output : Array[String]) -> Bool {
+  match value {
+    Array(values) => {
+      for descriptor in values {
+        match descriptor_digest(descriptor) {
+          Some(digest) => output.push(digest)
+          None => return false
+        }
+      }
+      true
+    }
+    _ => false
+  }
+}
+
+///|
+/// Separate blob dependencies from nested manifests; subject is a relationship
+/// target and is intentionally not required to exist for an artifact push.
+fn manifest_dependencies(body : Bytes) -> (Array[String], Array[String])? {
+  let text = @utf8.decode(body) catch { _ => return None }
+  let value = @json.parse(text) catch { _ => return None }
+  guard value is Object(object) else { return None }
+  let blobs : Array[String] = []
+  let manifests : Array[String] = []
+  match object.get("config") {
+    Some(descriptor) =>
+      match descriptor_digest(descriptor) {
+        Some(digest) => blobs.push(digest)
+        None => return None
+      }
+    None => ()
+  }
+  for key in ["layers", "blobs"] {
+    match object.get(key) {
+      Some(value) if append_descriptor_digests(value, blobs) => ()
+      Some(_) => return None
+      None => ()
+    }
+  }
+  match object.get("manifests") {
+    Some(value) if append_descriptor_digests(value, manifests) => ()
+    Some(_) => return None
+    None => ()
+  }
+  Some((blobs, manifests))
+}
+
+///|
+async fn manifest_dependencies_exist(
+  store : RegistryStore,
+  repository : String,
+  body : Bytes,
+) -> Bool {
+  let (blobs, manifests) = match manifest_dependencies(body) {
+    Some(value) => value
+    None => return false
+  }
+  for digest in blobs {
+    if !store.has_repository_blob(repository, digest) {
+      return false
+    }
+  }
+  for digest in manifests {
+    if store.get_manifest(repository, digest) is None {
+      return false
+    }
+  }
+  true
 }
 
 ///|
@@ -288,11 +513,51 @@ fn trim_http_ows(value : StringView) -> String {
 }
 
 ///|
-fn request_manifest_content_type(headers : @http.Headers) -> String {
+fn manifest_body_media_type(body : Bytes) -> String? {
+  let text = @utf8.decode(body) catch { _ => return None }
+  let value = @json.parse(text) catch { _ => return None }
+  guard value is Object(object) else { return None }
+  match object.get("mediaType") {
+    Some(String(value)) if valid_media_type(value) => Some(value)
+    _ => None
+  }
+}
+
+///|
+fn valid_manifest_content_type(headers : @http.Headers, body : Bytes) -> Bool {
+  match headers.get("Content-Type") {
+    Some(raw) => {
+      guard raw.find("\r") is None && raw.find("\n") is None else {
+        return false
+      }
+      let base : StringView = match raw.find(";") {
+        Some(index) => raw[:index]
+        None => raw[:]
+      }
+      let normalized = trim_http_ows(base)
+      guard valid_media_type(normalized) else { return false }
+      match manifest_body_media_type(body) {
+        Some(media_type) => normalized == media_type
+        None => normalized != ""
+      }
+    }
+    None => true
+  }
+}
+
+///|
+fn request_manifest_content_type(
+  headers : @http.Headers,
+  body : Bytes,
+) -> String {
   let default_type = "application/vnd.oci.image.manifest.v1+json"
   let raw = match headers.get("Content-Type") {
     Some(value) => value
-    None => return default_type
+    None =>
+      return match manifest_body_media_type(body) {
+        Some(value) => value
+        None => default_type
+      }
   }
   guard raw.find("\r") is None && raw.find("\n") is None else {
     return default_type
@@ -352,6 +617,9 @@ fn referrer_descriptor(
   }
   let artifact_type = match object.get("artifactType") {
     Some(String(value)) if value != "" => Some(value)
+    _ if media_type == "application/vnd.oci.image.index.v1+json" ||
+      media_type == "application/vnd.docker.distribution.manifest.list.v2+json" =>
+      None
     _ =>
       match object.get("config") {
         Some(Object(config)) =>
@@ -482,12 +750,20 @@ async fn handle_manifest(
       send_error(conn, 400, "MANIFEST_INVALID")
       return
     }
+    guard valid_manifest_content_type(headers, body) else {
+      send_error(conn, 400, "MANIFEST_INVALID")
+      return
+    }
     let body_digest = sha256_digest(body)
     guard manifest_reference_matches(reference, body_digest) else {
       send_error(conn, 400, "DIGEST_INVALID")
       return
     }
-    let content_type = request_manifest_content_type(headers)
+    guard manifest_dependencies_exist(store, repository, body) else {
+      send_error(conn, 400, "MANIFEST_BLOB_UNKNOWN")
+      return
+    }
+    let content_type = request_manifest_content_type(headers, body)
     let digest = store.put_manifest_with_type(
       repository, reference, body, content_type,
     )
@@ -568,20 +844,61 @@ async fn handle_referrers(
     send_error(conn, 405, "UNSUPPORTED")
     return
   }
-  let filter = query_value(path, "artifactType")
-  let descriptors : Array[Json] = []
-  for digest in store.list_manifest_digests(repository) {
-    let body = match store.get_manifest(repository, digest) {
-      Some(value) => value
-      None => continue
+  let filter : String? = match query_values(path, "artifactType") {
+    Some(values) if values.length() == 0 => None
+    Some(values) if values.length() == 1 && values[0] != "" => Some(values[0])
+    _ => {
+      send_error(conn, 400, "UNSUPPORTED")
+      return
     }
-    let media_type = store.manifest_content_type(repository, digest)
-    match referrer_descriptor(body, digest, media_type) {
-      Some((target, artifact_type, descriptor)) if target == subject =>
-        if filter is None || filter == artifact_type {
-          descriptors.push(descriptor)
-        }
-      _ => ()
+  }
+  let requested_limit : Int? = match query_values(path, "n") {
+    Some(values) if values.length() == 0 => None
+    Some(values) if values.length() == 1 => {
+      let parsed = @string.parse_int(values[0]) catch { _ => -1 }
+      guard parsed >= 0 else {
+        send_error(conn, 400, "UNSUPPORTED")
+        return
+      }
+      Some(parsed)
+    }
+    _ => {
+      send_error(conn, 400, "UNSUPPORTED")
+      return
+    }
+  }
+  let last : String? = match query_values(path, "last") {
+    Some(values) if values.length() == 0 => None
+    Some(values) if values.length() == 1 && valid_digest(values[0]) =>
+      Some(values[0])
+    _ => {
+      send_error(conn, 400, "UNSUPPORTED")
+      return
+    }
+  }
+  let limit = Some(
+    match requested_limit {
+      Some(value) => value
+      None => 1000
+    },
+  )
+  let matching_digests : Array[String] = []
+  let descriptor_by_digest : Map[String, Json] = Map([])
+  for
+    (digest, artifact_type, descriptor) in store.list_referrer_descriptors(
+      repository, subject,
+    ) {
+    if filter is None || filter == artifact_type {
+      matching_digests.push(digest)
+      descriptor_by_digest[digest] = descriptor
+    }
+  }
+  let (page_digests, next) = list_page(matching_digests, limit, last)
+  let descriptors : Array[Json] = []
+  for digest in page_digests {
+    match descriptor_by_digest.get(digest) {
+      Some(descriptor) => descriptors.push(descriptor)
+      None => ()
     }
   }
   let response = Json::object({
@@ -594,6 +911,29 @@ async fn handle_referrers(
   }
   if filter is Some(_) {
     response_headers["OCI-Filters-Applied"] = "artifactType"
+  }
+  match next {
+    Some(digest) => {
+      let page_size = match limit {
+        Some(value) => value
+        None => 1000
+      }
+      let filter_query = match filter {
+        Some(value) => "&artifactType=" + encode_query_value(value)
+        None => ""
+      }
+      response_headers["Link"] = "</v2/" +
+        repository +
+        "/referrers/" +
+        subject +
+        "?n=" +
+        page_size.to_string() +
+        "&last=" +
+        digest +
+        filter_query +
+        ">; rel=\"next\""
+    }
+    None => ()
   }
   conn
   ..send_response(200, "OK", extra_headers=response_headers)

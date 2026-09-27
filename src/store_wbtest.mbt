@@ -119,3 +119,109 @@ async test "filesystem store round trip" {
 
   @fs.rmdir(root, recursive=true)
 }
+
+///|
+async test "referrer index updates, deletes, and migrates legacy manifests" {
+  let root = @fs.tmpdir(prefix="artifactdock-referrers-")
+  let store = RegistryStore::new(root)
+  store.ensure()
+  let subject = "sha256:" + "a".repeat(64)
+  let first_body = @utf8.encode(
+    "{\"schemaVersion\":2,\"artifactType\":\"application/example.sbom\",\"subject\":{\"digest\":\"" +
+    subject +
+    "\"},\"annotations\":{\"kind\":\"sbom\"}}",
+  )
+  let second_body = @utf8.encode(
+    "{\"schemaVersion\":2,\"artifactType\":\"application/example.signature\",\"subject\":{\"digest\":\"" +
+    subject +
+    "\"}}",
+  )
+  let first_digest = store.put_manifest_with_type(
+    "demo/wasm", "sbom", first_body, "application/vnd.oci.image.manifest.v1+json",
+  )
+  let second_digest = store.put_manifest_with_type(
+    "demo/wasm", "signature", second_body, "application/vnd.oci.image.manifest.v1+json",
+  )
+  let expected_digests = [first_digest, second_digest]
+  sort_ascii(expected_digests)
+  assert_eq(store.list_referrer_digests("demo/wasm", subject), expected_digests)
+  let reopened = RegistryStore::new(root)
+  assert_eq(
+    reopened.list_referrer_digests("demo/wasm", subject),
+    expected_digests,
+  )
+  let indexed_artifact_types : Array[String] = []
+  for
+    (_, artifact_type, _) in reopened.list_referrer_descriptors(
+      "demo/wasm", subject,
+    ) {
+    match artifact_type {
+      Some(value) => indexed_artifact_types.push(value)
+      None => ()
+    }
+  }
+  sort_ascii(indexed_artifact_types)
+  assert_eq(indexed_artifact_types, [
+    "application/example.sbom", "application/example.signature",
+  ])
+  assert_true(store.delete_manifest("demo/wasm", "sbom"))
+  assert_eq(store.list_referrer_digests("demo/wasm", subject).length(), 2)
+  assert_true(store.delete_manifest("demo/wasm", first_digest))
+  assert_eq(store.list_referrer_digests("demo/wasm", subject), [second_digest])
+
+  let legacy_root = @fs.tmpdir(prefix="artifactdock-referrers-legacy-")
+  let legacy = RegistryStore::new(legacy_root)
+  let legacy_body = @utf8.encode(
+    "{\"schemaVersion\":2,\"artifactType\":\"application/example.signature\",\"subject\":{\"digest\":\"" +
+    subject +
+    "\"}}",
+  )
+  let legacy_digest = sha256_digest(legacy_body)
+  ensure_dir(legacy.blobs_dir())
+  ensure_dir(legacy.manifest_type_dir("old/repo"))
+  write_bytes(legacy.blob_path(legacy_digest), legacy_body)
+  write_bytes(
+    legacy.manifest_type_path("old/repo", legacy_digest),
+    @utf8.encode("application/vnd.oci.image.manifest.v1+json"),
+  )
+  legacy.ensure()
+  assert_eq(legacy.list_referrer_digests("old/repo", subject), [legacy_digest])
+  @fs.rmdir(root, recursive=true)
+  @fs.rmdir(legacy_root, recursive=true)
+}
+
+///|
+async test "manifest dependencies stay within their repository" {
+  let root = @fs.tmpdir(prefix="artifactdock-dependencies-")
+  let store = RegistryStore::new(root)
+  store.ensure()
+  let payload : Bytes = b"wasm-module"
+  let payload_digest = store.put_blob(payload)
+  store.link_blob("demo/wasm", payload_digest)
+  let image_manifest = @utf8.encode(
+    "{\"schemaVersion\":2,\"config\":{\"mediaType\":\"application/wasm\",\"digest\":\"" +
+    payload_digest +
+    "\",\"size\":" +
+    payload.length().to_string() +
+    "}}",
+  )
+  assert_true(valid_manifest_json(image_manifest))
+  assert_true(manifest_dependencies_exist(store, "demo/wasm", image_manifest))
+  assert_false(manifest_dependencies_exist(store, "other/repo", image_manifest))
+  let missing_blob = @utf8.encode(
+    "{\"schemaVersion\":2,\"blobs\":[{\"mediaType\":\"application/wasm\",\"digest\":\"sha256:" +
+    "f".repeat(64) +
+    "\",\"size\":1}]}",
+  )
+  assert_false(manifest_dependencies_exist(store, "demo/wasm", missing_blob))
+
+  let child = store.put_manifest("demo/wasm", "child", b"{\"schemaVersion\":2}")
+  let index_manifest = @utf8.encode(
+    "{\"schemaVersion\":2,\"manifests\":[{\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"" +
+    child +
+    "\",\"size\":19}]}",
+  )
+  assert_true(manifest_dependencies_exist(store, "demo/wasm", index_manifest))
+  assert_false(manifest_dependencies_exist(store, "other/repo", index_manifest))
+  @fs.rmdir(root, recursive=true)
+}

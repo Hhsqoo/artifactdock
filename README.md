@@ -16,13 +16,13 @@ The first release targets a reliable single-node registry suitable for local dev
 - Blob `HEAD`/`GET`
 - Blob byte-range `GET` for resuming interrupted downloads (`206`/`416`)
 - Blob deletion with repository-safe shared content retention
-- Manifest `PUT`, `HEAD`, `GET` by tag or digest, with UTF-8 JSON/schema validation
+- Manifest `PUT`, `HEAD`, `GET` by tag or digest, with UTF-8 JSON/schema validation, descriptor checks, request/body media-type matching, and repository-local dependency checks
 - Digest-addressed manifest pushes with validated repeated `tag` parameters and `OCI-Tag` responses
 - Manifest and tag deletion with repository-safe shared blob retention
 - Manifest media-type preservation for Wasm and other OCI artifacts
 - ASCII sorted tag listing with OCI `n`/`last` pagination and next-page links
 - Docker-compatible repository catalog (`/v2/_catalog`) with `n`/`last` pagination
-- OCI 1.1 referrers discovery with `artifactType` filtering
+- OCI 1.1 referrers discovery with `artifactType` filtering, persistent indexing, digest-ordered pagination, and next-page links
 - Restart-safe filesystem persistence and atomic writes
 - Offline garbage collection with a non-destructive dry-run mode
 
