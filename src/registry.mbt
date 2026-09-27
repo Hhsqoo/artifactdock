@@ -360,7 +360,7 @@ fn valid_descriptor(value : Json) -> Bool {
     _ => false
   }
   let valid_size = match object.get("size") {
-    Some(Number(value, ..)) => value >= 0.0
+    Some(Number(value, ..)) => value >= 0.0 && value.floor() == value
     _ => false
   }
   valid_type && valid_digest_value && valid_size

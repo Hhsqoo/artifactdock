@@ -131,6 +131,15 @@ test "manifest JSON validation" {
       ),
     ),
   )
+  assert_false(
+    valid_manifest_json(
+      @utf8.encode(
+        "{\"schemaVersion\":2,\"layers\":[{\"mediaType\":\"application/wasm\",\"digest\":\"" +
+        digest +
+        "\",\"size\":0.5}]}",
+      ),
+    ),
+  )
 }
 
 ///|
