@@ -101,12 +101,20 @@ fn decode_query_value(value : String) -> String? {
 }
 
 ///|
+fn uppercase_hex_digit(value : Int) -> Byte {
+  if value < 10 {
+    (b'0'.to_int() + value).to_byte()
+  } else {
+    (b'A'.to_int() + value - 10).to_byte()
+  }
+}
+
+///|
 /// Encode one UTF-8 query value so pagination links remain valid for media
 /// types containing reserved characters such as `+`, `&`, or `=`.
 fn encode_query_value(value : String) -> String {
   let input = @utf8.encode(value)
   let output = Buffer()
-  let hex = "0123456789ABCDEF"
   for byte in input {
     if (byte >= b'a' && byte <= b'z') ||
       (byte >= b'A' && byte <= b'Z') ||
@@ -119,8 +127,8 @@ fn encode_query_value(value : String) -> String {
     } else {
       let number = byte.to_int()
       output.write_byte(b'%')
-      output.write_byte(@utf8.encode(hex[number / 16].to_string())[0])
-      output.write_byte(@utf8.encode(hex[number % 16].to_string())[0])
+      output.write_byte(uppercase_hex_digit(number / 16))
+      output.write_byte(uppercase_hex_digit(number % 16))
     }
   }
   @utf8.decode(output.contents()) catch {
