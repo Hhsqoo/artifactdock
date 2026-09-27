@@ -116,6 +116,17 @@ invalid_tags_status=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
 test "$invalid_tags_status" = 400
 test "$(curl -sS -o /dev/null -w '%{http_code}' \
   "$base/v2/demo/range/manifests/should-not-exist")" = 404
+type_mismatch_status=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+  -H 'Content-Type: application/vnd.oci.image.manifest.v1+json' \
+  --data-binary '{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json"}' \
+  "$base/v2/demo/range/manifests/type-mismatch")
+test "$type_mismatch_status" = 400
+missing_dependency_status=$(curl -sS -o "$root.body" -w '%{http_code}' -X PUT \
+  -H 'Content-Type: application/vnd.oci.image.manifest.v1+json' \
+  --data-binary '{"schemaVersion":2,"config":{"mediaType":"application/wasm","digest":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","size":1}}' \
+  "$base/v2/demo/range/manifests/missing-dependency")
+test "$missing_dependency_status" = 400
+jq -e '.errors[0].code == "MANIFEST_BLOB_UNKNOWN"' "$root.body" >/dev/null
 sbom_manifest=$(printf \
   '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","artifactType":"application/vnd.example.sbom.v1","subject":{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"%s","size":19},"annotations":{"org.example.kind":"sbom"}}' \
   "$manifest_digest")
@@ -139,6 +150,17 @@ grep -Fiq 'content-type: application/vnd.oci.image.index.v1+json' "$root.headers
 printf '%s' "$referrers" | jq -e \
   '.schemaVersion == 2 and (.manifests | length == 2) and ([.manifests[].artifactType] | sort == ["application/vnd.example.sbom.v1","application/vnd.example.signature.v1"])' \
   >/dev/null
+first_referrer_page=$(curl -sS -D "$root.headers" \
+  "$base/v2/demo/range/referrers/$manifest_digest?n=1")
+printf '%s' "$first_referrer_page" | jq -e \
+  '.schemaVersion == 2 and (.manifests | length == 1)' >/dev/null
+next_referrer_path=$(sed -n 's/^Link: <\([^>]*\)>;.*/\1/ip' "$root.headers")
+test -n "$next_referrer_path"
+second_referrer_page=$(curl -sS "$base$next_referrer_path")
+printf '%s' "$second_referrer_page" | jq -e \
+  '.schemaVersion == 2 and (.manifests | length == 1)' >/dev/null
+test "$(printf '%s\n' "$first_referrer_page" "$second_referrer_page" | \
+  jq -s '[.[].manifests[].digest] | unique | length')" = 2
 filtered=$(curl -sS -D "$root.headers" \
   "$base/v2/demo/range/referrers/$manifest_digest?artifactType=application%2Fvnd.example.sbom.v1")
 grep -Fiq 'oci-filters-applied: artifactType' "$root.headers"

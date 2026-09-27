@@ -101,8 +101,36 @@ test "manifest JSON validation" {
   assert_false(valid_manifest_json(@utf8.encode("{\"schemaVersion\":")))
   assert_false(valid_manifest_json(@utf8.encode("{}")))
   assert_false(valid_manifest_json(@utf8.encode("{\"schemaVersion\":3}")))
+  assert_false(
+    valid_manifest_json(
+      @utf8.encode("{\"schemaVersion\":2,\"mediaType\":\"not-a-media-type\"}"),
+    ),
+  )
   assert_false(valid_manifest_json(@utf8.encode("[]")))
   assert_false(valid_manifest_json([0xFF]))
+  let digest = "sha256:" + "0".repeat(64)
+  let descriptor_manifest = @utf8.encode(
+    "{\"schemaVersion\":2,\"config\":{\"mediaType\":\"application/wasm\",\"digest\":\"" +
+    digest +
+    "\",\"size\":0},\"layers\":[]}",
+  )
+  assert_true(valid_manifest_json(descriptor_manifest))
+  assert_false(
+    valid_manifest_json(
+      @utf8.encode(
+        "{\"schemaVersion\":2,\"config\":{\"mediaType\":\"application/wasm\",\"digest\":\"sha256:bad\",\"size\":0}}",
+      ),
+    ),
+  )
+  assert_false(
+    valid_manifest_json(
+      @utf8.encode(
+        "{\"schemaVersion\":2,\"layers\":[{\"mediaType\":\"application/wasm\",\"digest\":\"" +
+        digest +
+        "\",\"size\":-1}]}",
+      ),
+    ),
+  )
 }
 
 ///|
@@ -116,17 +144,52 @@ test "manifest digest references" {
 
 ///|
 test "manifest response metadata" {
-  assert_eq(
-    request_manifest_content_type({
-      "Content-Type": " application/vnd.example.manifest+json ; charset=utf-8",
-    }),
-    "application/vnd.example.manifest+json",
+  let typed_body = @utf8.encode(
+    "{\"schemaVersion\":2,\"mediaType\":\"application/vnd.example.manifest+json\"}",
   )
   assert_eq(
-    request_manifest_content_type({}),
+    request_manifest_content_type(
+      {
+        "Content-Type": " application/vnd.example.manifest+json ; charset=utf-8",
+      },
+      typed_body,
+    ),
+    "application/vnd.example.manifest+json",
+  )
+  let body = @utf8.encode(
+    "{\"schemaVersion\":2,\"mediaType\":\"application/vnd.example+json\"}",
+  )
+  assert_eq(
+    request_manifest_content_type({}, body),
+    "application/vnd.example+json",
+  )
+  assert_true(
+    valid_manifest_content_type(
+      { "Content-Type": "application/vnd.example+json; charset=utf-8" },
+      body,
+    ),
+  )
+  assert_false(
+    valid_manifest_content_type(
+      { "Content-Type": "application/vnd.oci.image.manifest.v1+json" },
+      body,
+    ),
+  )
+  assert_eq(
+    request_manifest_content_type({}, @utf8.encode("{\"schemaVersion\":2}")),
     "application/vnd.oci.image.manifest.v1+json",
   )
   assert_eq(tag_header_value(["1.2.3", "1.2", "latest"]), "1.2.3, 1.2, latest")
+  let artifact_type = "application/vnd.example+json;variant=a&b=c"
+  let encoded = encode_query_value(artifact_type)
+  assert_true(encoded.find("+") is None)
+  assert_true(encoded.find("&") is None)
+  assert_true(encoded.find("=") is None)
+  assert_true(
+    query_value("/referrers?artifactType=" + encoded, "artifactType")
+    is Some(value) &&
+    value == artifact_type,
+  )
 }
 
 ///|
@@ -156,5 +219,18 @@ test "referrer descriptors" {
   assert_true(
     referrer_descriptor(fallback, digest, "application/manifest")
     is Some((_, Some("application/config"), _)),
+  )
+  let index_without_artifact_type = @utf8.encode(
+    "{\"schemaVersion\":2,\"mediaType\":\"application/vnd.oci.image.index.v1+json\",\"config\":{\"mediaType\":\"application/config\",\"digest\":\"" +
+    digest +
+    "\",\"size\":1},\"subject\":{\"digest\":\"" +
+    subject +
+    "\"}}",
+  )
+  assert_true(
+    referrer_descriptor(
+      index_without_artifact_type, digest, "application/vnd.oci.image.index.v1+json",
+    )
+    is Some((_, None, _)),
   )
 }

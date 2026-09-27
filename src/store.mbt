@@ -97,6 +97,25 @@ fn RegistryStore::manifest_type_path(
 }
 
 ///|
+fn RegistryStore::referrer_subject_dir(
+  self : RegistryStore,
+  repository : String,
+  subject : String,
+) -> String {
+  self.repo_dir(repository) + "/referrers/" + subject[7:].to_owned()
+}
+
+///|
+fn RegistryStore::referrer_path(
+  self : RegistryStore,
+  repository : String,
+  subject : String,
+  referrer : String,
+) -> String {
+  self.referrer_subject_dir(repository, subject) + "/" + referrer[7:].to_owned()
+}
+
+///|
 async fn write_bytes(path : String, data : Bytes) -> Unit {
   let file = @fs.open(
     path,
@@ -144,6 +163,85 @@ pub async fn RegistryStore::ensure(self : RegistryStore) -> Unit {
   ensure_dir(self.blobs_dir())
   ensure_dir(self.uploads_dir())
   ensure_dir(self.root + "/repos")
+  self.backfill_referrers_index()
+}
+
+///|
+/// Build the persistent subject-to-manifest index once for stores created by
+/// versions that discovered referrers by scanning every manifest.
+async fn RegistryStore::backfill_referrers_index(self : RegistryStore) -> Unit {
+  let marker = self.root + "/indexes/referrers-v1"
+  if @fs.exists(marker) {
+    return
+  }
+  let repos = self.root + "/repos"
+  let manifest_suffix = "/manifest-types"
+  if @fs.exists(repos) {
+    @fs.walk(
+      repos,
+      async fn(path, _entries) {
+        guard path.has_suffix(manifest_suffix) else { return }
+        let repo_prefix = repos + "/"
+        guard path.length() > repo_prefix.length() + manifest_suffix.length() else {
+          return
+        }
+        let repository = path[repo_prefix.length():path.length() -
+        manifest_suffix.length()].to_owned()
+        guard valid_repository(repository) else { return }
+        for name in @fs.readdir(path, include_hidden=false, sort=true) {
+          let digest = "sha256:" + name
+          guard valid_digest(digest) && self.has_blob(digest) else { continue }
+          let body = match self.get_blob(digest) {
+            Some(value) => value
+            None => continue
+          }
+          let media_type = self.manifest_content_type(repository, digest)
+          self.add_referrer_index(repository, body, digest, media_type)
+        }
+      },
+      max_concurrency=1,
+    )
+  }
+  ensure_dir(self.root + "/indexes")
+  atomic_write(marker, b"1", "referrers-index")
+}
+
+///|
+async fn RegistryStore::add_referrer_index(
+  self : RegistryStore,
+  repository : String,
+  body : Bytes,
+  referrer : String,
+  media_type : String,
+) -> Unit {
+  guard valid_repository(repository) && valid_digest(referrer) else { return }
+  match referrer_descriptor(body, referrer, media_type) {
+    Some((subject, _, descriptor)) => {
+      let directory = self.referrer_subject_dir(repository, subject)
+      ensure_dir(directory)
+      let path = self.referrer_path(repository, subject, referrer)
+      atomic_write(path, @utf8.encode(descriptor.stringify()), "referrer-index")
+    }
+    None => ()
+  }
+}
+
+///|
+async fn RegistryStore::remove_referrer_index(
+  self : RegistryStore,
+  repository : String,
+  subject : String,
+  referrer : String,
+) -> Unit {
+  guard valid_repository(repository) &&
+    valid_digest(subject) &&
+    valid_digest(referrer) else {
+    return
+  }
+  let path = self.referrer_path(repository, subject, referrer)
+  if @fs.exists(path) {
+    @fs.remove(path)
+  }
 }
 
 ///|
@@ -277,6 +375,7 @@ pub async fn RegistryStore::put_manifest_with_type(
   ensure_dir(tag_dir)
   let type_dir = self.manifest_type_dir(repository)
   ensure_dir(type_dir)
+  self.add_referrer_index(repository, data, digest, content_type)
   atomic_write(
     self.manifest_type_path(repository, digest),
     @utf8.encode(content_type),
@@ -399,6 +498,15 @@ pub async fn RegistryStore::delete_manifest(
     }
   }
   @fs.remove(type_path)
+  match self.get_blob(reference) {
+    Some(body) =>
+      match manifest_subject(body) {
+        Some(subject) =>
+          self.remove_referrer_index(repository, subject, reference)
+        None => ()
+      }
+    None => ()
+  }
   true
 }
 
@@ -505,6 +613,66 @@ pub async fn RegistryStore::list_manifest_digests(
     }
   }
   digests
+}
+
+///|
+/// Return indexed, still-addressable referrer manifests for a subject.
+pub async fn RegistryStore::list_referrer_digests(
+  self : RegistryStore,
+  repository : String,
+  subject : String,
+) -> Array[String] {
+  guard valid_repository(repository) && valid_digest(subject) else { return [] }
+  let path = self.referrer_subject_dir(repository, subject)
+  guard @fs.exists(path) else { return [] }
+  let digests : Array[String] = []
+  for name in @fs.readdir(path, include_hidden=false, sort=true) {
+    let digest = "sha256:" + name
+    if valid_digest(digest) &&
+      @fs.exists(self.manifest_type_path(repository, digest)) &&
+      self.has_blob(digest) {
+      digests.push(digest)
+    }
+  }
+  digests
+}
+
+///|
+/// Return persisted referrer descriptors without reopening each manifest.
+/// Entries are sorted by digest so pagination remains stable across restarts.
+pub async fn RegistryStore::list_referrer_descriptors(
+  self : RegistryStore,
+  repository : String,
+  subject : String,
+) -> Array[(String, String?, Json)] {
+  guard valid_repository(repository) && valid_digest(subject) else { return [] }
+  let path = self.referrer_subject_dir(repository, subject)
+  guard @fs.exists(path) else { return [] }
+  let descriptors : Array[(String, String?, Json)] = []
+  for name in @fs.readdir(path, include_hidden=false, sort=true) {
+    let digest = "sha256:" + name
+    guard valid_digest(digest) &&
+      @fs.exists(self.manifest_type_path(repository, digest)) &&
+      self.has_blob(digest) else {
+      continue
+    }
+    let bytes = match read_bytes(path + "/" + name) {
+      Some(value) => value
+      None => continue
+    }
+    let text = @utf8.decode(bytes) catch { _ => continue }
+    let descriptor = @json.parse(text) catch { _ => continue }
+    guard descriptor is Object(object) else { continue }
+    guard object.get("digest") is Some(String(value)) && value == digest else {
+      continue
+    }
+    let artifact_type = match object.get("artifactType") {
+      Some(String(value)) => Some(value)
+      _ => None
+    }
+    descriptors.push((digest, artifact_type, descriptor))
+  }
+  descriptors
 }
 
 ///|
