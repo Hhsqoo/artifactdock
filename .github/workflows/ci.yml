@@ -25,3 +25,46 @@ jobs:
         run: |
           moon fmt
           git diff --exit-code
+
+  oci-conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup MoonBit
+        uses: hustcer/setup-moonbit@v1
+      - name: Setup Go for OCI conformance suite
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Update dependencies
+        run: moon update
+      - name: Start registry
+        run: |
+          root="$RUNNER_TEMP/artifactdock-conformance"
+          mkdir -p "$root"
+          nohup moon run src -- --root "$root" --host 127.0.0.1 --port 5000 > "$RUNNER_TEMP/artifactdock-conformance.log" 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:5000/v2/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/artifactdock-conformance.log"
+          exit 1
+      - name: OCI Distribution Spec conformance
+        uses: opencontainers/distribution-spec@97274622c11112caa21efb8c52acca3c6b8fa7f1
+        env:
+          OCI_VERSION: "1.1"
+          OCI_REGISTRY: "127.0.0.1:5000"
+          OCI_TLS: "disabled"
+          OCI_REPO1: "conformance/repo1"
+          OCI_REPO2: "conformance/repo2"
+          OCI_API_BLOBS_DIGEST_HEADER: "true"
+          OCI_API_BLOBS_UPLOAD_CANCEL: "true"
+          OCI_API_MANIFESTS_DIGEST_HEADER: "true"
+          OCI_API_MANIFESTS_TAG_PARAM: "true"
+          OCI_DATA_SHA512: "false"
+      - name: Registry log on failure
+        if: failure()
+        run: cat "$RUNNER_TEMP/artifactdock-conformance.log"
