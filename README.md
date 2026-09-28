@@ -32,7 +32,9 @@ Blob data created before repository-scoped links were introduced must be re-push
 
 ## Run
 
-Install MoonBit, then run:
+Install MoonBit from the [official download page](https://www.moonbitlang.com/download/).
+This project requires `moonc` v0.10.14 or later; verify the compiler version with `moon version --all`.
+Then run:
 
 ```powershell
 moon run src -- --root ./artifactdock-data --host 127.0.0.1 --port 5000
