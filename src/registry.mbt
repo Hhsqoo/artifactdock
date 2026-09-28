@@ -184,17 +184,37 @@ async fn send_error(
   code : Int,
   reason : String,
 ) -> Unit {
-  let body = "{\"errors\":[{\"code\":\"" +
-    reason +
-    "\",\"message\":\"" +
-    reason +
-    "\"}]}"
+  let body = error_body(reason)
   conn
   ..send_response(code, reason, extra_headers={
     "Content-Type": "application/json",
   })
   ..write(@utf8.encode(body))
   .end_response()
+}
+
+///|
+fn error_body(reason : String) -> String {
+  "{\"errors\":[{\"code\":\"" + reason + "\",\"message\":\"" + reason + "\"}]}"
+}
+
+///|
+async fn send_resource_error(
+  conn : @http.ServerConnection,
+  code : Int,
+  reason : String,
+  request_method : @http.RequestMethod,
+) -> Unit {
+  if request_method is Head {
+    let body = @utf8.encode(error_body(reason))
+    conn.send_response(code, reason, extra_headers={
+      "Content-Type": "application/json",
+      "Content-Length": body.length().to_string(),
+    })
+    conn.end_response()
+  } else {
+    send_error(conn, code, reason)
+  }
 }
 
 ///|
@@ -438,6 +458,44 @@ fn append_descriptor_digests(value : Json, output : Array[String]) -> Bool {
 }
 
 ///|
+fn descriptor_has_external_nondistributable_source(value : Json) -> Bool {
+  guard value is Object(object) else { return false }
+  let media_type = match object.get("mediaType") {
+    Some(String(value)) => value
+    _ => return false
+  }
+  let is_nondistributable = media_type ==
+    "application/vnd.oci.image.layer.nondistributable.v1.tar" ||
+    media_type == "application/vnd.oci.image.layer.nondistributable.v1.tar+gzip" ||
+    media_type == "application/vnd.oci.image.layer.nondistributable.v1.tar+zstd" ||
+    media_type == "application/vnd.docker.image.rootfs.foreign.diff.tar.gzip"
+  let has_urls = match object.get("urls") {
+    Some(Array(urls)) => urls.length() > 0
+    _ => false
+  }
+  is_nondistributable && has_urls
+}
+
+///|
+fn append_blob_descriptor_digests(value : Json, output : Array[String]) -> Bool {
+  match value {
+    Array(values) => {
+      for descriptor in values {
+        match descriptor_digest(descriptor) {
+          Some(digest) =>
+            if !descriptor_has_external_nondistributable_source(descriptor) {
+              output.push(digest)
+            }
+          None => return false
+        }
+      }
+      true
+    }
+    _ => false
+  }
+}
+
+///|
 /// Separate blob dependencies from nested manifests; subject is a relationship
 /// target and is intentionally not required to exist for an artifact push.
 fn manifest_dependencies(body : Bytes) -> (Array[String], Array[String])? {
@@ -456,7 +514,7 @@ fn manifest_dependencies(body : Bytes) -> (Array[String], Array[String])? {
   }
   for key in ["layers", "blobs"] {
     match object.get(key) {
-      Some(value) if append_descriptor_digests(value, blobs) => ()
+      Some(value) if append_blob_descriptor_digests(value, blobs) => ()
       Some(_) => return None
       None => ()
     }
@@ -654,12 +712,12 @@ async fn handle_blob(
   conn : @http.ServerConnection,
 ) -> Unit {
   guard valid_repository(repository) && valid_digest(digest) else {
-    send_error(conn, 400, "DIGEST_INVALID")
+    send_resource_error(conn, 400, "DIGEST_INVALID", request_method)
     return
   }
   if request_method is Delete {
     guard store.delete_repository_blob(repository, digest) else {
-      send_error(conn, 404, "BLOB_UNKNOWN")
+      send_resource_error(conn, 404, "BLOB_UNKNOWN", request_method)
       return
     }
     send_empty(conn, 202, "Accepted")
@@ -668,7 +726,7 @@ async fn handle_blob(
   let body = match store.get_repository_blob(repository, digest) {
     Some(value) => value
     None => {
-      send_error(conn, 404, "BLOB_UNKNOWN")
+      send_resource_error(conn, 404, "BLOB_UNKNOWN", request_method)
       return
     }
   }
@@ -708,7 +766,7 @@ async fn handle_blob(
           conn.end_response()
         }
       }
-    _ => send_error(conn, 405, "UNSUPPORTED")
+    _ => send_resource_error(conn, 405, "UNSUPPORTED", request_method)
   }
 }
 
@@ -724,7 +782,7 @@ async fn handle_manifest(
   body_reader : &@io.Reader,
 ) -> Unit {
   guard valid_repository(repository) && valid_manifest_reference(reference) else {
-    send_error(conn, 400, "MANIFEST_INVALID")
+    send_resource_error(conn, 400, "MANIFEST_INVALID", request_method)
     return
   }
   if request_method is Put {
@@ -732,7 +790,7 @@ async fn handle_manifest(
       match query_values(path, "tag") {
         Some(values) => values
         None => {
-          send_error(conn, 400, "TAG_INVALID")
+          send_resource_error(conn, 400, "TAG_INVALID", request_method)
           return
         }
       }
@@ -741,26 +799,26 @@ async fn handle_manifest(
     }
     for tag in requested_tags {
       guard valid_reference(tag) else {
-        send_error(conn, 400, "TAG_INVALID")
+        send_resource_error(conn, 400, "TAG_INVALID", request_method)
         return
       }
     }
     let body = body_reader.read_all().binary()
     guard valid_manifest_json(body) else {
-      send_error(conn, 400, "MANIFEST_INVALID")
+      send_resource_error(conn, 400, "MANIFEST_INVALID", request_method)
       return
     }
     guard valid_manifest_content_type(headers, body) else {
-      send_error(conn, 400, "MANIFEST_INVALID")
+      send_resource_error(conn, 400, "MANIFEST_INVALID", request_method)
       return
     }
     let body_digest = sha256_digest(body)
     guard manifest_reference_matches(reference, body_digest) else {
-      send_error(conn, 400, "DIGEST_INVALID")
+      send_resource_error(conn, 400, "DIGEST_INVALID", request_method)
       return
     }
     guard manifest_dependencies_exist(store, repository, body) else {
-      send_error(conn, 400, "MANIFEST_BLOB_UNKNOWN")
+      send_resource_error(conn, 400, "MANIFEST_BLOB_UNKNOWN", request_method)
       return
     }
     let content_type = request_manifest_content_type(headers, body)
@@ -786,7 +844,7 @@ async fn handle_manifest(
   }
   if request_method is Delete {
     guard store.delete_manifest(repository, reference) else {
-      send_error(conn, 404, "MANIFEST_UNKNOWN")
+      send_resource_error(conn, 404, "MANIFEST_UNKNOWN", request_method)
       return
     }
     send_empty(conn, 202, "Accepted")
@@ -795,7 +853,7 @@ async fn handle_manifest(
   let value = match store.get_manifest(repository, reference) {
     Some(value) => value
     None => {
-      send_error(conn, 404, "MANIFEST_UNKNOWN")
+      send_resource_error(conn, 404, "MANIFEST_UNKNOWN", request_method)
       return
     }
   }
@@ -819,7 +877,7 @@ async fn handle_manifest(
         value,
         store.manifest_content_type(repository, sha256_digest(value)),
       )
-    _ => send_error(conn, 405, "UNSUPPORTED")
+    _ => send_resource_error(conn, 405, "UNSUPPORTED", request_method)
   }
 }
 

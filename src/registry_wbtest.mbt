@@ -143,6 +143,23 @@ test "manifest JSON validation" {
 }
 
 ///|
+test "external nondistributable layers are not local dependencies" {
+  let config_digest = "sha256:" + "1".repeat(64)
+  let layer_digest = "sha256:" + "2".repeat(64)
+  let body = @utf8.encode(
+    "{\"schemaVersion\":2,\"config\":{\"mediaType\":\"application/vnd.oci.image.config.v1+json\",\"digest\":\"" +
+    config_digest +
+    "\",\"size\":0},\"layers\":[{\"mediaType\":\"application/vnd.oci.image.layer.nondistributable.v1.tar+gzip\",\"digest\":\"" +
+    layer_digest +
+    "\",\"size\":1,\"urls\":[\"https://example.invalid/layer\"]}]}",
+  )
+  match manifest_dependencies(body) {
+    Some((blobs, _)) => assert_eq(blobs, [config_digest])
+    None => assert_true(false)
+  }
+}
+
+///|
 test "manifest digest references" {
   let body : Bytes = b"{\"schemaVersion\":2}"
   let digest = sha256_digest(body)
